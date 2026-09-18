@@ -1,10 +1,12 @@
 use crate::{
+    commands::hook::{HookArgs, command_hook},
     commands::install::{InstallArgs, command_install},
     error::AppError,
 };
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::Verbosity;
 
+mod hook;
 mod install;
 
 #[derive(Parser, Debug)]
@@ -35,11 +37,15 @@ enum Commands {
     Install(InstallArgs),
     /// Uninstall hooks
     Uninstall,
+    /// Internal: run hook scripts (called by git wrappers)
+    #[command(hide = true)]
+    Hook(HookArgs),
 }
 
 pub fn run(cli: Cli) -> Result<(), AppError> {
     match cli.command {
         Commands::Install(args) => command_install(args),
         Commands::Uninstall => todo!(),
+        Commands::Hook(args) => command_hook(args),
     }
 }

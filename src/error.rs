@@ -18,6 +18,12 @@ pub enum AppError {
     #[error("Git error")]
     GitError,
 
+    #[error("sh interpreter not found (install Git for Windows)")]
+    ShNotFound,
+
+    #[error("Hook failed with exit code {0}")]
+    HookFailed(i32),
+
     #[error("Toml parse error")]
     TomlDeError(#[from] toml::de::Error),
 
@@ -39,9 +45,10 @@ impl From<AppError> for AppExitCode {
     fn from(err: AppError) -> Self {
         use AppError::*;
         match err {
-            Io(_) | Unknown(_) => AppExitCode::UnknownError,
+            Io(_) | Unknown(_) | HookFailed(_) => AppExitCode::UnknownError,
             GitError => AppExitCode::GitError,
             HomeNotFound | InternalError => AppExitCode::HomeNotFound,
+            ShNotFound => AppExitCode::GitError,
             TomlDeError(_) | TomlSerError(_) => AppExitCode::ConfigError,
         }
     }
@@ -65,6 +72,8 @@ impl Termination for Exit {
     fn report(self) -> ExitCode {
         match self.0 {
             Ok(_) => ExitCode::SUCCESS,
+            // hook exit code must be propagated to git as-is
+            Err(AppError::HookFailed(code)) => ExitCode::from(code.clamp(0, 255) as u8),
             Err(err) => {
                 eprintln!("Error: {err}");
                 ExitCode::from(err)

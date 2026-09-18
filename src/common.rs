@@ -7,6 +7,9 @@ use std::{
 
 use crate::error::AppError;
 
+pub const HOOKS_DIR: &str = "hooks.d";
+pub const BIN_DIR: &str = "bin";
+
 pub const GIT_HOOKS: &[&str] = &[
     // commit flow
     "pre-commit",
