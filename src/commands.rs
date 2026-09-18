@@ -11,7 +11,7 @@ mod install;
 #[command(
     about,
     author,
-    name = "git-overhooks",
+    name = "goh",
     version,
     help_template = "\
 {before-help}{name} {version}

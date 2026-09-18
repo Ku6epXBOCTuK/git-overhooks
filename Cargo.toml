@@ -1,5 +1,9 @@
 [package]
 name = "git-overhooks"
+
+[[bin]]
+name = "goh"
+path = "src/main.rs"
 version = "0.1.0"
 edition = "2024"
 authors = ["Ku6epXBOCTuK <https://github.com/Ku6epXBOCTuK>"]

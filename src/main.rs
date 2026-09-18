@@ -16,7 +16,7 @@ mod error;
 
 fn setup() -> Result<(), AppError> {
     let path = dirs::home_dir().ok_or(AppError::HomeNotFound)?;
-    let path = path.join(".git-overhooks");
+    let path = path.join(".config").join("goh");
     fs::create_dir_all(&path)?;
     APP_DIR.set(path).map_err(|_| AppError::InternalError)?;
 
