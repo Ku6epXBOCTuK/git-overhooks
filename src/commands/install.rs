@@ -83,7 +83,7 @@ pub fn command_install(args: InstallArgs) -> Result<(), AppError> {
     let self_path = current_exe()?;
 
     for hook in GIT_HOOKS {
-        let hook_dir = use_dir(&app_dir.join(HOOKS_DIR), format!("{hook}.d"))?;
+        use_dir(&app_dir.join(HOOKS_DIR), format!("{hook}.d"))?;
         write_git_hook(&bin_dir, hook, &self_path)?;
     }
 

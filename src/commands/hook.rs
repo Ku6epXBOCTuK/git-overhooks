@@ -83,28 +83,28 @@ fn resolve_sh() -> Result<PathBuf, AppError> {
         return Ok(PathBuf::from("sh"));
     }
 
-    if let Ok(output) = Command::new("where").arg("sh").output() {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(first) = stdout.lines().next() {
-                let path = PathBuf::from(first.trim());
-                if path.is_file() {
-                    return Ok(path);
-                }
+    if let Ok(output) = Command::new("where").arg("sh").output()
+        && output.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(first) = stdout.lines().next() {
+            let path = PathBuf::from(first.trim());
+            if path.is_file() {
+                return Ok(path);
             }
         }
     }
 
-    if let Ok(output) = Command::new("where").arg("git").output() {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                let git_exe = PathBuf::from(line.trim());
-                if let Some(git_root) = git_exe.ancestors().nth(2) {
-                    let sh = git_root.join("usr").join("bin").join("sh.exe");
-                    if sh.is_file() {
-                        return Ok(sh);
-                    }
+    if let Ok(output) = Command::new("where").arg("git").output()
+        && output.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            let git_exe = PathBuf::from(line.trim());
+            if let Some(git_root) = git_exe.ancestors().nth(2) {
+                let sh = git_root.join("usr").join("bin").join("sh.exe");
+                if sh.is_file() {
+                    return Ok(sh);
                 }
             }
         }

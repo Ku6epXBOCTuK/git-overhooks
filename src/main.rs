@@ -11,7 +11,6 @@ use tracing_subscriber::fmt::time::ChronoLocal;
 
 mod commands;
 mod common;
-mod config;
 mod error;
 
 fn setup() -> Result<(), AppError> {

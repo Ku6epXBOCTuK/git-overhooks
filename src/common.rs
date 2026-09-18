@@ -1,6 +1,5 @@
 use std::{
     fs::create_dir_all,
-    io::{self, Write},
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -39,7 +38,7 @@ pub fn app_dir() -> &'static PathBuf {
     APP_DIR.get().expect("APP_DIR not initialized")
 }
 
-pub fn use_dir<T>(base: &PathBuf, inner_dir: T) -> Result<PathBuf, AppError>
+pub fn use_dir<T>(base: &Path, inner_dir: T) -> Result<PathBuf, AppError>
 where
     T: AsRef<Path>,
 {
@@ -49,17 +48,4 @@ where
     }
 
     Ok(path)
-}
-
-pub fn confirm(prompt: &str) -> bool {
-    println!("{} [y/N]", prompt);
-    let _ = io::stdout().flush();
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-
-    match input.trim().to_lowercase().as_str() {
-        "y" | "yes" => true,
-        _ => false,
-    }
 }

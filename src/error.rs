@@ -23,12 +23,6 @@ pub enum AppError {
 
     #[error("Hook failed with exit code {0}")]
     HookFailed(i32),
-
-    #[error("Toml parse error")]
-    TomlDeError(#[from] toml::de::Error),
-
-    #[error("Toml convert error")]
-    TomlSerError(#[from] toml::ser::Error),
 }
 
 #[repr(u8)]
@@ -38,7 +32,6 @@ pub(crate) enum AppExitCode {
     UnknownError = 1,
     HomeNotFound = 10,
     GitError,
-    ConfigError,
 }
 
 impl From<AppError> for AppExitCode {
@@ -46,10 +39,8 @@ impl From<AppError> for AppExitCode {
         use AppError::*;
         match err {
             Io(_) | Unknown(_) | HookFailed(_) => AppExitCode::UnknownError,
-            GitError => AppExitCode::GitError,
+            GitError | ShNotFound => AppExitCode::GitError,
             HomeNotFound | InternalError => AppExitCode::HomeNotFound,
-            ShNotFound => AppExitCode::GitError,
-            TomlDeError(_) | TomlSerError(_) => AppExitCode::ConfigError,
         }
     }
 }
