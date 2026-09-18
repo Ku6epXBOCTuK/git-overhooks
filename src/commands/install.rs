@@ -1,17 +1,37 @@
 use std::{env::current_exe, fs, path::Path, process::Command};
 
 use crate::{
-    common::{app_dir, use_dir, BIN_DIR, GIT_HOOKS, HOOKS_DIR},
+    common::{BIN_DIR, GIT_HOOKS, HOOKS_DIR, app_dir, use_dir},
     error::AppError,
 };
 use clap::Args;
 use tracing::{info, warn};
+
+const FORMAT_SCRIPT: &str = "00-format.sh";
 
 #[derive(Args, Debug)]
 pub struct InstallArgs {
     /// Force overwrite core.hooksPath
     #[arg(short, long)]
     force: bool,
+}
+
+fn write_format_script(hook_dir: &Path) -> Result<(), AppError> {
+    let path = hook_dir.join(FORMAT_SCRIPT);
+    if path.exists() {
+        info!("Format script already exists: {}", path.display());
+        return Ok(());
+    }
+    info!("Write format script: {}", path.display());
+    fs::write(&path, include_str!("../format.template"))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
+    }
+
+    Ok(())
 }
 
 fn write_git_hook(bin_dir: &Path, hook_name: &str, bin_path: &Path) -> Result<(), AppError> {
@@ -63,9 +83,19 @@ pub fn command_install(args: InstallArgs) -> Result<(), AppError> {
     let self_path = current_exe()?;
 
     for hook in GIT_HOOKS {
-        use_dir(&app_dir.join(HOOKS_DIR), format!("{hook}.d"))?;
+        let hook_dir = use_dir(&app_dir.join(HOOKS_DIR), format!("{hook}.d"))?;
         write_git_hook(&bin_dir, hook, &self_path)?;
     }
+
+    let pre_commit_dir = app_dir.join(HOOKS_DIR).join("pre-commit.d");
+    if args.force {
+        let path = pre_commit_dir.join(FORMAT_SCRIPT);
+        if path.exists() {
+            fs::remove_file(&path)?;
+        }
+    }
+    write_format_script(&pre_commit_dir)?;
+
     info!("Hooks created ok");
 
     let ours = dunce::canonicalize(&bin_dir)?
