@@ -1,4 +1,8 @@
 install:
+	cargo install --path .
+	goh install
+
+dev:
 	cargo run -- install -vvvv
 
 git-show-hooks:
