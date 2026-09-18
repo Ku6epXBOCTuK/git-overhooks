@@ -1,0 +1,62 @@
+use std::{
+    fs::create_dir_all,
+    io::{self, Write},
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
+
+use crate::error::AppError;
+
+pub const GIT_HOOKS: &[&str] = &[
+    // commit flow
+    "pre-commit",
+    "prepare-commit-msg",
+    "commit-msg",
+    "post-commit",
+    // email flow
+    "applypatch-msg",
+    "pre-applypatch",
+    "post-applypatch",
+    // other
+    "pre-rebase",
+    "post-rewrite",
+    "post-checkout",
+    "post-merge",
+    "pre-push",
+    "pre-auto-gc",
+    // server
+    "pre-receive",
+    "update",
+    "post-receive",
+];
+
+pub static APP_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn app_dir() -> &'static PathBuf {
+    APP_DIR.get().expect("APP_DIR not initialized")
+}
+
+pub fn use_dir<T>(base: &PathBuf, inner_dir: T) -> Result<PathBuf, AppError>
+where
+    T: AsRef<Path>,
+{
+    let path = base.join(inner_dir);
+    if !path.exists() {
+        create_dir_all(&path)?
+    }
+
+    Ok(path)
+}
+
+pub fn confirm(prompt: &str) -> bool {
+    println!("{} [y/N]", prompt);
+    let _ = io::stdout().flush();
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+
+    match input.trim().to_lowercase().as_str() {
+        "y" | "yes" => true,
+        _ => false,
+    }
+}

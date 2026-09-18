@@ -1,0 +1,74 @@
+use std::process::{ExitCode, Termination};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum AppError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Unknown error: {0}")]
+    Unknown(String),
+
+    #[error("Home directory not found")]
+    HomeNotFound,
+
+    #[error("Internal error")]
+    InternalError,
+
+    #[error("Git error")]
+    GitError,
+
+    #[error("Toml parse error")]
+    TomlDeError(#[from] toml::de::Error),
+
+    #[error("Toml convert error")]
+    TomlSerError(#[from] toml::ser::Error),
+}
+
+#[repr(u8)]
+pub(crate) enum AppExitCode {
+    #[allow(dead_code)]
+    Success = 0,
+    UnknownError = 1,
+    HomeNotFound = 10,
+    GitError,
+    ConfigError,
+}
+
+impl From<AppError> for AppExitCode {
+    fn from(err: AppError) -> Self {
+        use AppError::*;
+        match err {
+            Io(_) | Unknown(_) => AppExitCode::UnknownError,
+            GitError => AppExitCode::GitError,
+            HomeNotFound | InternalError => AppExitCode::HomeNotFound,
+            TomlDeError(_) | TomlSerError(_) => AppExitCode::ConfigError,
+        }
+    }
+}
+
+impl From<AppExitCode> for ExitCode {
+    fn from(code: AppExitCode) -> Self {
+        ExitCode::from(code as u8)
+    }
+}
+
+impl From<AppError> for ExitCode {
+    fn from(err: AppError) -> Self {
+        AppExitCode::from(err).into()
+    }
+}
+
+pub struct Exit(pub Result<(), AppError>);
+
+impl Termination for Exit {
+    fn report(self) -> ExitCode {
+        match self.0 {
+            Ok(_) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("Error: {err}");
+                ExitCode::from(err)
+            }
+        }
+    }
+}
