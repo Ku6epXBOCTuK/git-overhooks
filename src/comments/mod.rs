@@ -85,7 +85,7 @@ pub fn process_source(
         let mut dirty = false;
         for action in &outcome.actions {
             match action {
-                Action::Normalized | Action::Truncated => {
+                Action::Normalized | Action::Truncated { .. } => {
                     dirty = true;
                     findings.push(Finding {
                         file: file.to_string(),
@@ -185,7 +185,13 @@ pub fn print_report(report: &Report, write: bool) {
                 }
             }
             Action::Normalized => format!("keyword normalized: {}", finding.keyword),
-            Action::Truncated => "comment truncated to max_lines".to_string(),
+            Action::Truncated { lines, max } => {
+                if write {
+                    format!("comment too long: {lines} lines, cut to max_lines = {max}")
+                } else {
+                    format!("comment too long: {lines} lines > max_lines = {max}")
+                }
+            }
             Action::NonAscii => format!("non-ascii text in {}", finding.keyword),
         };
         println!("[goh] {}:{}: {message}", finding.file, finding.line);
@@ -282,7 +288,7 @@ mod tests {
             Some("/// doc\npub fn b() {}\n\n// NOTE: [cut] one\n// two\n// three\n")
         );
         assert_eq!(findings.len(), 1);
-        assert_eq!(findings[0].action, Action::Truncated);
+        assert_eq!(findings[0].action, Action::Truncated { lines: 4, max: 3 });
         assert_eq!(findings[0].line, 4);
     }
 

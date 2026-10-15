@@ -13,7 +13,7 @@ fn mark_truncated(head: &str) -> String {
 pub enum Action {
     Removed,
     Normalized,
-    Truncated,
+    Truncated { lines: usize, max: usize },
     NonAscii,
 }
 
@@ -77,11 +77,12 @@ pub fn apply(block: &CommentBlock, config: &CommentConfig) -> Outcome {
 
     let max = config.max_lines.max(1);
     if contents.len() > max {
+        let lines = contents.len();
         let head = mark_truncated(&contents[0]);
         let mut truncated = vec![head];
         truncated.extend(contents[1..max].iter().cloned());
         contents = truncated;
-        actions.push(Action::Truncated);
+        actions.push(Action::Truncated { lines, max });
     }
 
     Outcome {
@@ -162,7 +163,10 @@ mod tests {
         let source = "// NOTE: one\n// two\n// three\n// four\n// five\n";
         let block = blocks(source).remove(0);
         let outcome = apply(&block, &CommentConfig::default());
-        assert!(outcome.actions.contains(&Action::Truncated));
+        assert_eq!(
+            outcome.actions,
+            vec![Action::Truncated { lines: 5, max: 3 }]
+        );
         assert_eq!(
             outcome.block.render(),
             vec![
