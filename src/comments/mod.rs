@@ -209,7 +209,13 @@ pub fn print_report(report: &Report, write: bool) {
             (_, true) => {
                 "staged content violates rules too (fix in the index yourself)".to_string()
             }
-            (Action::Removed, _) => "comment removed (no keyword)".to_string(),
+            (Action::Removed, _) => {
+                if write {
+                    "comment removed (no keyword)".to_string()
+                } else {
+                    "comment would be removed (no keyword)".to_string()
+                }
+            }
             (Action::Normalized, _) => format!("keyword normalized: {}", finding.keyword),
             (Action::Truncated, _) => "comment truncated to max_lines".to_string(),
             (Action::NonAscii, _) => format!("non-ascii text in {}", finding.keyword),
@@ -219,7 +225,7 @@ pub fn print_report(report: &Report, write: bool) {
 
     if !write {
         println!(
-            "[goh] {} issue(s) found, nothing written (use --write)",
+            "[goh] {} issue(s) found, nothing changed (run with --write to fix)",
             report.findings.len()
         );
         return;
