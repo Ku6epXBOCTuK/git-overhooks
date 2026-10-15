@@ -18,7 +18,6 @@ pub struct Finding {
     pub line: usize,
     pub action: Action,
     pub keyword: String,
-    pub staged_only: bool,
 }
 
 pub struct Report {
@@ -73,7 +72,6 @@ pub fn process_source(
                 line: block.start + 1,
                 action: Action::Removed,
                 keyword,
-                staged_only: false,
             });
             if block.pre.is_empty() {
                 lines.drain(block.start..=block.end);
@@ -94,7 +92,6 @@ pub fn process_source(
                         line: block.start + 1,
                         action: action.clone(),
                         keyword: keyword.clone(),
-                        staged_only: false,
                     });
                 }
                 Action::NonAscii => findings.push(Finding {
@@ -102,7 +99,6 @@ pub fn process_source(
                     line: block.start + 1,
                     action: Action::NonAscii,
                     keyword: keyword.clone(),
-                    staged_only: false,
                 }),
                 _ => {}
             }
@@ -155,19 +151,6 @@ pub fn run(root: &Path, files: &[String], write: bool) -> Result<Report, AppErro
 
         let (output, mut found) = process_source(&source, file, &syntax, &config);
 
-        if let Some(staged) = staged_source(root, file)
-            && staged != source
-            && process_source(&staged, file, &syntax, &config).0.is_some()
-        {
-            found.push(Finding {
-                file: file.to_string(),
-                line: 1,
-                action: Action::Removed,
-                keyword: String::new(),
-                staged_only: true,
-            });
-        }
-
         if output.is_some() {
             changed_files += 1;
         }
@@ -186,18 +169,6 @@ pub fn run(root: &Path, files: &[String], write: bool) -> Result<Report, AppErro
     })
 }
 
-fn staged_source(root: &Path, file: &str) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["show", &format!(":{file}")])
-        .current_dir(root)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8(output.stdout).ok()
-}
-
 pub fn print_report(report: &Report, write: bool) {
     if report.findings.is_empty() {
         println!("[goh] comments: ok");
@@ -205,20 +176,17 @@ pub fn print_report(report: &Report, write: bool) {
     }
 
     for finding in &report.findings {
-        let message = match (&finding.action, finding.staged_only) {
-            (_, true) => {
-                "staged content violates rules too (fix in the index yourself)".to_string()
-            }
-            (Action::Removed, _) => {
+        let message = match &finding.action {
+            Action::Removed => {
                 if write {
                     "comment removed (no keyword)".to_string()
                 } else {
                     "comment would be removed (no keyword)".to_string()
                 }
             }
-            (Action::Normalized, _) => format!("keyword normalized: {}", finding.keyword),
-            (Action::Truncated, _) => "comment truncated to max_lines".to_string(),
-            (Action::NonAscii, _) => format!("non-ascii text in {}", finding.keyword),
+            Action::Normalized => format!("keyword normalized: {}", finding.keyword),
+            Action::Truncated => "comment truncated to max_lines".to_string(),
+            Action::NonAscii => format!("non-ascii text in {}", finding.keyword),
         };
         println!("[goh] {}:{}: {message}", finding.file, finding.line);
     }
