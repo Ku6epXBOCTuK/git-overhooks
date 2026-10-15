@@ -10,6 +10,7 @@ use tracing::info;
 use tracing_subscriber::fmt::time::ChronoLocal;
 
 mod commands;
+mod comments;
 mod common;
 mod error;
 

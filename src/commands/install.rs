@@ -8,6 +8,7 @@ use clap::Args;
 use tracing::{info, warn};
 
 const FORMAT_SCRIPT: &str = "00-format.sh";
+const COMMENTS_SCRIPT: &str = "01-comments.sh";
 
 #[derive(Args, Debug)]
 pub struct InstallArgs {
@@ -24,13 +25,44 @@ fn write_format_script(hook_dir: &Path) -> Result<(), AppError> {
     }
     info!("Write format script: {}", path.display());
     fs::write(&path, include_str!("../format.template"))?;
+    set_executable(&path)?;
 
+    Ok(())
+}
+
+fn set_executable(path: &Path) -> Result<(), AppError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
     }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
 
+fn write_comments_script(hook_dir: &Path, bin_path: &Path) -> Result<(), AppError> {
+    let path = hook_dir.join(COMMENTS_SCRIPT);
+    let bin_str = dunce::canonicalize(bin_path)?
+        .to_str()
+        .ok_or(AppError::InternalError)?
+        .replace('\\', "/");
+    let contents = include_str!("../comments.template").replace("{{bin-path}}", &bin_str);
+
+    info!("Write comments script: {}", path.display());
+    fs::write(&path, contents)?;
+    set_executable(&path)?;
+    Ok(())
+}
+
+fn write_config(force: bool) -> Result<(), AppError> {
+    let path = app_dir().join("config.toml");
+    if path.exists() && !force {
+        info!("Config already exists: {}", path.display());
+        return Ok(());
+    }
+    info!("Write config: {}", path.display());
+    fs::write(&path, crate::comments::config::DEFAULT_CONFIG)?;
     Ok(())
 }
 
@@ -46,12 +78,7 @@ fn write_git_hook(bin_dir: &Path, hook_name: &str, bin_path: &Path) -> Result<()
 
     let path = bin_dir.join(hook_name);
     fs::write(&path, contents)?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
-    }
+    set_executable(&path)?;
 
     Ok(())
 }
@@ -95,6 +122,8 @@ pub fn command_install(args: InstallArgs) -> Result<(), AppError> {
         }
     }
     write_format_script(&pre_commit_dir)?;
+    write_comments_script(&pre_commit_dir, &self_path)?;
+    write_config(args.force)?;
 
     info!("Hooks created ok");
 
