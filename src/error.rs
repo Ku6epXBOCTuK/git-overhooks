@@ -63,7 +63,6 @@ impl Termination for Exit {
     fn report(self) -> ExitCode {
         match self.0 {
             Ok(_) => ExitCode::SUCCESS,
-            // hook exit code must be propagated to git as-is
             Err(AppError::HookFailed(code)) => ExitCode::from(code.clamp(0, 255) as u8),
             Err(err) => {
                 eprintln!("Error: {err}");

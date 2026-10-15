@@ -10,23 +10,19 @@ pub const HOOKS_DIR: &str = "hooks.d";
 pub const BIN_DIR: &str = "bin";
 
 pub const GIT_HOOKS: &[&str] = &[
-    // commit flow
     "pre-commit",
     "prepare-commit-msg",
     "commit-msg",
     "post-commit",
-    // email flow
     "applypatch-msg",
     "pre-applypatch",
     "post-applypatch",
-    // other
     "pre-rebase",
     "post-rewrite",
     "post-checkout",
     "post-merge",
     "pre-push",
     "pre-auto-gc",
-    // server
     "pre-receive",
     "update",
     "post-receive",
