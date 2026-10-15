@@ -2,27 +2,36 @@ use std::path::Path;
 
 pub struct Syntax {
     pub line: &'static [&'static str],
+    pub block: bool,
+    pub html: bool,
 }
 
 const SLASH: &[&str] = &["//"];
 const HASH: &[&str] = &["#"];
 const DASH: &[&str] = &["--"];
 
+const BLOCK_OPEN: &str = "/*";
+const BLOCK_CLOSE: &str = "*/";
+const HTML_OPEN: &str = "<!--";
+const HTML_CLOSE: &str = "-->";
+
 pub fn syntax_for(path: &Path) -> Option<Syntax> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
 
-    let line: &'static [&'static str] = match ext.as_str() {
-        "rs" | "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "go" | "c" | "h" | "cc" | "cpp"
-        | "hpp" | "java" | "kt" | "kts" | "cs" | "swift" | "scala" | "php" | "m" | "mm"
-        | "dart" | "zig" => SLASH,
+    let (line, block, html): (&[&str], bool, bool) = match ext.as_str() {
+        "rs" | "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs" | "go" | "c" | "h"
+        | "cc" | "cpp" | "hpp" | "java" | "kt" | "kts" | "cs" | "swift" | "scala" | "php" | "m"
+        | "mm" | "dart" | "zig" | "groovy" | "gradle" => (SLASH, true, false),
+        "css" | "scss" | "sass" | "less" => (SLASH, true, false),
+        "svelte" | "vue" | "astro" | "html" | "htm" | "xml" | "svg" => (SLASH, true, true),
         "py" | "rb" | "sh" | "bash" | "zsh" | "fish" | "ps1" | "toml" | "yaml" | "yml" | "pl"
-        | "pm" | "r" | "jl" | "ex" | "exs" | "nim" | "make" | "mk" | "dockerfile" | "tf"
-        | "hcl" | "cfg" | "ini" => HASH,
-        "sql" | "lua" | "hs" | "adb" => DASH,
+        | "pm" | "r" | "jl" | "ex" | "exs" | "nim" | "make" | "mk" | "tf" | "hcl" | "cfg"
+        | "ini" => (HASH, false, false),
+        "sql" | "lua" | "hs" | "adb" => (DASH, false, false),
         _ => return None,
     };
 
-    Some(Syntax { line })
+    Some(Syntax { line, block, html })
 }
 
 const DIRECTIVES: &[&str] = &[
@@ -63,24 +72,47 @@ pub struct CommentBlock {
     pub marker: String,
     pub indent: String,
     pub pre: String,
+    pub close: Option<String>,
     pub contents: Vec<String>,
 }
 
 impl CommentBlock {
     pub fn render(&self) -> Vec<String> {
-        let mut lines = Vec::new();
-        for (index, content) in self.contents.iter().enumerate() {
-            if index == 0 {
-                if self.pre.is_empty() {
-                    lines.push(format!("{}{}{}", self.indent, self.marker, content));
-                } else {
-                    lines.push(format!("{}{}{}", self.indent, self.pre, content));
-                }
-            } else {
-                lines.push(format!("{}{}{}", self.indent, self.marker, content));
-            }
+        if let Some(close) = &self.close {
+            let last = self.contents.len().saturating_sub(1);
+            return self
+                .contents
+                .iter()
+                .enumerate()
+                .map(|(index, content)| {
+                    let mut line = String::from(&self.indent);
+                    if index == 0 {
+                        line.push_str(&self.marker);
+                    }
+                    line.push_str(content);
+                    if index == last {
+                        line.push_str(close);
+                    }
+                    line
+                })
+                .collect();
         }
-        lines
+
+        self.contents
+            .iter()
+            .enumerate()
+            .map(|(index, content)| {
+                if index == 0 {
+                    if self.pre.is_empty() {
+                        format!("{}{}{}", self.indent, self.marker, content)
+                    } else {
+                        format!("{}{}{}", self.indent, self.pre, content)
+                    }
+                } else {
+                    format!("{}{}{}", self.indent, self.marker, content)
+                }
+            })
+            .collect()
     }
 }
 
@@ -90,25 +122,6 @@ fn find_marker<'a>(trimmed: &'a str, markers: &[&'a str]) -> Option<&'a str> {
         .filter(|m| trimmed.starts_with(**m))
         .max_by_key(|m| m.len())
         .copied()
-}
-
-fn is_doc_comment(trimmed: &str) -> bool {
-    trimmed.starts_with("///")
-        || trimmed.starts_with("//!")
-        || trimmed.starts_with("/**")
-        || trimmed.starts_with("/*!")
-        || trimmed.starts_with("*/")
-        || trimmed == "*"
-        || trimmed.starts_with("* ")
-}
-
-fn is_directive(content: &str) -> bool {
-    let content = content.trim_start_matches([' ', '\t', ':', '-']);
-    DIRECTIVES.iter().any(|d| content.starts_with(d))
-}
-
-fn clean_content(raw: &str) -> String {
-    raw.trim_end_matches(['\r']).trim_end().to_string()
 }
 
 /// NOTE: detects a marker placed after code on the same line; quoted text is
@@ -150,6 +163,95 @@ fn find_trailing_marker<'a>(trimmed: &'a str, markers: &[&'a str]) -> Option<(&'
     best
 }
 
+fn is_doc_comment(trimmed: &str) -> bool {
+    trimmed.starts_with("///")
+        || trimmed.starts_with("//!")
+        || trimmed.starts_with("/*!")
+        || trimmed.starts_with("*/")
+        || trimmed == "*"
+        || trimmed.starts_with("* ")
+}
+
+fn is_directive(content: &str) -> bool {
+    let content = content.trim_start_matches([' ', '\t', ':', '-', '*']);
+    DIRECTIVES.iter().any(|d| content.starts_with(d))
+}
+
+fn clean_content(raw: &str) -> String {
+    raw.trim_end_matches(['\r']).trim_end().to_string()
+}
+
+fn strip_block_decoration(raw: &str) -> String {
+    let trimmed = raw.trim_start();
+    let without_star = trimmed.strip_prefix('*').unwrap_or(trimmed);
+    without_star
+        .strip_prefix(' ')
+        .unwrap_or(without_star)
+        .to_string()
+}
+
+/// NOTE: unterminated block comments are skipped entirely, rewriting a partial
+/// comment would risk eating real code.
+fn parse_block_comment(
+    lines: &[&str],
+    start: usize,
+    marker: &str,
+    close_token: &str,
+) -> Option<CommentBlock> {
+    let first = lines[start];
+    let indent_len = first.len() - first.trim_start().len();
+    let indent = first[..indent_len].to_string();
+    let body = &first[indent_len + marker.len()..];
+
+    let mut contents = Vec::new();
+
+    if let Some(index) = body.find(close_token) {
+        contents.push(body[..index].to_string());
+        let end = start;
+        let close = body[index..].trim_end_matches(['\r']).to_string();
+        return Some(CommentBlock {
+            start,
+            end,
+            marker: marker.to_string(),
+            indent,
+            pre: String::new(),
+            close: Some(close),
+            contents,
+        });
+    }
+
+    contents.push(clean_content(body));
+    let mut index = start;
+    loop {
+        index += 1;
+        if index >= lines.len() {
+            return None;
+        }
+        let line = lines[index];
+        match line.find(close_token) {
+            Some(position) => {
+                contents.push(strip_block_decoration(&line[..position]));
+                let end = index;
+                let close = format!(
+                    "{}{}",
+                    &line[indent_len.min(position)..position],
+                    close_token
+                );
+                return Some(CommentBlock {
+                    start,
+                    end,
+                    marker: marker.to_string(),
+                    indent,
+                    pre: String::new(),
+                    close: Some(close),
+                    contents,
+                });
+            }
+            None => contents.push(strip_block_decoration(line)),
+        }
+    }
+}
+
 pub fn parse(source: &str, syntax: &Syntax) -> Vec<CommentBlock> {
     let lines: Vec<&str> = source.lines().collect();
     let mut blocks = Vec::new();
@@ -163,8 +265,32 @@ pub fn parse(source: &str, syntax: &Syntax) -> Vec<CommentBlock> {
             continue;
         }
 
-        if trimmed.starts_with("/*") {
-            index = skip_block(&lines, index);
+        if trimmed.starts_with(HTML_OPEN) && syntax.html {
+            if let Some(block) = parse_block_comment(&lines, index, HTML_OPEN, HTML_CLOSE) {
+                index = block.end + 1;
+                if !is_directive(&block.contents[0]) {
+                    blocks.push(block);
+                }
+                continue;
+            }
+            index += 1;
+            continue;
+        }
+
+        if trimmed.starts_with(BLOCK_OPEN) && syntax.block {
+            if trimmed.starts_with("/**") || trimmed.starts_with("/*!") {
+                index = skip_block(&lines, index);
+                continue;
+            }
+            match parse_block_comment(&lines, index, BLOCK_OPEN, BLOCK_CLOSE) {
+                Some(block) => {
+                    index = block.end + 1;
+                    if !is_directive(&block.contents[0]) {
+                        blocks.push(block);
+                    }
+                }
+                None => index = skip_block(&lines, index),
+            }
             continue;
         }
 
@@ -225,6 +351,7 @@ pub fn parse(source: &str, syntax: &Syntax) -> Vec<CommentBlock> {
             marker: marker.to_string(),
             indent,
             pre,
+            close: None,
             contents,
         });
 
@@ -237,7 +364,7 @@ pub fn parse(source: &str, syntax: &Syntax) -> Vec<CommentBlock> {
 fn skip_block(lines: &[&str], start: usize) -> usize {
     let mut index = start;
     while index < lines.len() {
-        if lines[index].contains("*/") {
+        if lines[index].contains(BLOCK_CLOSE) {
             return index + 1;
         }
         index += 1;
@@ -250,11 +377,27 @@ mod tests {
     use super::*;
 
     fn slash() -> Syntax {
-        Syntax { line: SLASH }
+        Syntax {
+            line: SLASH,
+            block: true,
+            html: false,
+        }
     }
 
     fn hash() -> Syntax {
-        Syntax { line: HASH }
+        Syntax {
+            line: HASH,
+            block: false,
+            html: false,
+        }
+    }
+
+    fn markup() -> Syntax {
+        Syntax {
+            line: SLASH,
+            block: true,
+            html: true,
+        }
     }
 
     #[test]
@@ -303,8 +446,65 @@ mod tests {
     fn known_extensions() {
         assert!(syntax_for(Path::new("a.rs")).is_some());
         assert!(syntax_for(Path::new("a.ts")).is_some());
-        assert!(syntax_for(Path::new("a.py")).is_some());
+        assert!(syntax_for(Path::new("a.css")).is_some());
+        assert!(syntax_for(Path::new("a.svelte")).is_some());
         assert!(syntax_for(Path::new("a.md")).is_none());
         assert!(syntax_for(Path::new("a.bin")).is_none());
+    }
+
+    #[test]
+    fn inline_block_comment() {
+        let source = "/* junk */\n.a {}\n";
+        let blocks = parse(source, &slash());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].contents, vec![" junk "]);
+        assert_eq!(blocks[0].render(), vec!["/* junk */"]);
+    }
+
+    #[test]
+    fn multiline_block_comment() {
+        let source = "/*\n * one\n * two\n */\n.b {}\n";
+        let blocks = parse(source, &slash());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].start, 0);
+        assert_eq!(blocks[0].end, 3);
+        assert_eq!(blocks[0].render().len(), 4);
+        assert!(blocks[0].render().last().unwrap().ends_with("*/"));
+    }
+
+    #[test]
+    fn jsdoc_block_is_skipped() {
+        let source = "/**\n * doc\n */\nlet x = 1;\n";
+        let blocks = parse(source, &slash());
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn unterminated_block_is_skipped() {
+        let source = "/* never closed\nlet x = 1;\n";
+        let blocks = parse(source, &slash());
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn block_directive_is_skipped() {
+        let source = "/* eslint-disable no-console */\nlet x = 1;\n";
+        let blocks = parse(source, &slash());
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn html_comments() {
+        let source = "<!-- old markup\n<p>x</p>\n-->\n<p>keep</p>\n";
+        let blocks = parse(source, &markup());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].render()[0], "<!-- old markup");
+        assert_eq!(blocks[0].render().last().unwrap().trim_end(), "-->");
+    }
+
+    #[test]
+    fn html_not_parsed_for_plain_script() {
+        let source = "<!-- comment -->\nlet x = 1;\n";
+        assert!(parse(source, &slash()).is_empty());
     }
 }

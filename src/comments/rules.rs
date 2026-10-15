@@ -99,7 +99,11 @@ mod tests {
     use crate::comments::parser::{self, Syntax};
 
     fn blocks(source: &str) -> Vec<CommentBlock> {
-        let syntax = Syntax { line: &["//"] };
+        let syntax = Syntax {
+            line: &["//"],
+            block: true,
+            html: false,
+        };
         parser::parse(source, &syntax)
     }
 

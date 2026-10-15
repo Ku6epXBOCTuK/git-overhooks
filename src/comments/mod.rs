@@ -239,7 +239,11 @@ mod tests {
     use super::*;
 
     fn syntax() -> Syntax {
-        Syntax { line: &["//"] }
+        Syntax {
+            line: &["//"],
+            block: true,
+            html: false,
+        }
     }
 
     fn run(source: &str) -> (Option<String>, Vec<Finding>) {

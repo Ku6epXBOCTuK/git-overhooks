@@ -1,5 +1,5 @@
 install:
-	cargo install --path .
+	cargo install --path . --force
 	goh install
 
 dev:
