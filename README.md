@@ -34,8 +34,20 @@ goh просто запускает их по очереди.
 перечислена алиасом: `to-do` станет `TODO`, а `to.do` будет удалён как комментарий
 без ключевого слова.
 
-Не трогаются doc-комментарии (`///`, `//!`, `/** */`), shebang и директивы
-(`eslint-disable`, `prettier-ignore`, `nolint`, `go:generate`, `vim:`).
+Не трогаются shebang, директивы (`eslint-disable`, `prettier-ignore`,
+`nolint`, `go:generate`, `vim:`) и настоящая документация:
+
+1. `///` и `//!` в Rust — это doc-комментарии по спецификации языка
+2. `/** */` в `.js`/`.ts`/`.svelte`/`.vue`/`.astro`, если внутри есть хоть один признак JSDoc:
+   - тег (`@param`, `@returns`, `@throws`, `@type`, `@typedef`, `@property`, `@example`,
+     `@deprecated`, `@template`, `@see`, `@extends`, `@implements`, `@default`, `@enum`,
+     `@private`, `@public`)
+   - тип в фигурных скобках (`{string}`, `{Array<T>}`, `{?string}`)
+   - ссылка (`{@link X}`, `{@linkcode}`, `{@linkplain}`)
+   - markdown (```-блок, `[текст](url)`, http-ссылка)
+
+`/** */` без этих признаков считается обычным комментарием и подпадает под правила —
+достаточно одного сигнала, чтобы блок остался нетронутым.
 
 Исключения: `.prettierignore`, иначе `.gitignore`, плюс `exclude` из конфига.
 

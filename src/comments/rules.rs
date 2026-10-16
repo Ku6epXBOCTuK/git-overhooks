@@ -1,12 +1,18 @@
 use super::{config::CommentConfig, parser::CommentBlock};
 
 fn mark_truncated(head: &str) -> String {
-    let trimmed = head.trim_start();
+    let prefix_len = head.len() - head_text(head).len();
+    let trimmed = &head[prefix_len..];
     let label_end = match trimmed.find(':') {
         Some(index) => index + 1,
         None => first_word(trimmed).len(),
     };
-    format!(" {} [cut]{}", &trimmed[..label_end], &trimmed[label_end..])
+    format!(
+        "{}{} [cut]{}",
+        &head[..prefix_len],
+        &trimmed[..label_end],
+        &trimmed[label_end..]
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,8 +29,17 @@ pub struct Outcome {
     pub actions: Vec<Action>,
 }
 
-fn first_word(content: &str) -> &str {
+fn head_text(content: &str) -> &str {
     let trimmed = content.trim_start();
+    if let Some(stripped) = trimmed.strip_prefix('*') {
+        stripped.trim_start()
+    } else {
+        trimmed
+    }
+}
+
+fn first_word(content: &str) -> &str {
+    let trimmed = head_text(content);
     let end = trimmed
         .find(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
         .unwrap_or(trimmed.len());
@@ -47,7 +62,12 @@ pub fn apply(block: &CommentBlock, config: &CommentConfig) -> Outcome {
 
     let mut actions = Vec::new();
 
-    let raw_word = strip_trailing_punctuation(first_word(&contents[0]).to_string());
+    let head = contents
+        .iter()
+        .position(|line| !head_text(line).is_empty())
+        .unwrap_or(0);
+
+    let raw_word = strip_trailing_punctuation(first_word(&contents[head]).to_string());
 
     let Some(keyword) = config.canonical_keyword(&raw_word) else {
         actions.push(Action::Removed);
@@ -61,13 +81,13 @@ pub fn apply(block: &CommentBlock, config: &CommentConfig) -> Outcome {
     };
 
     if keyword != raw_word {
-        let span = contents[0].find(&raw_word).unwrap_or(0);
-        let rest = &contents[0][span + raw_word.len()..];
-        let mut rebuilt = String::with_capacity(contents[0].len());
-        rebuilt.push_str(&contents[0][..span]);
+        let span = contents[head].find(&raw_word).unwrap_or(0);
+        let rest = &contents[head][span + raw_word.len()..];
+        let mut rebuilt = String::with_capacity(contents[head].len());
+        rebuilt.push_str(&contents[head][..span]);
         rebuilt.push_str(&keyword);
         rebuilt.push_str(rest);
-        contents[0] = rebuilt;
+        contents[head] = rebuilt;
         actions.push(Action::Normalized);
     }
 
@@ -76,11 +96,13 @@ pub fn apply(block: &CommentBlock, config: &CommentConfig) -> Outcome {
     }
 
     let max = config.max_lines.max(1);
-    if contents.len() > max {
-        let lines = contents.len();
-        let head = mark_truncated(&contents[0]);
-        let mut truncated = vec![head];
-        truncated.extend(contents[1..max].iter().cloned());
+
+    if contents.len() - head > max {
+        let lines = contents.len() - head;
+        let marked = mark_truncated(&contents[head]);
+        let mut truncated = contents[..head].to_vec();
+        truncated.push(marked);
+        truncated.extend(contents[head + 1..head + max].iter().cloned());
         contents = truncated;
         actions.push(Action::Truncated { lines, max });
     }
@@ -104,6 +126,7 @@ mod tests {
             line: &["//"],
             block: true,
             html: false,
+            jsdoc: true,
         };
         parser::parse(source, &syntax)
     }
@@ -173,6 +196,36 @@ mod tests {
                 "// NOTE: [cut] one".to_string(),
                 "// two".to_string(),
                 "// three".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn normalizes_keyword_inside_block_comment() {
+        let source = "/** to-do: fix it */\nlet x = 1;\n";
+        let block = blocks(source).remove(0);
+        let outcome = apply(&block, &CommentConfig::default());
+        assert!(outcome.actions.contains(&Action::Normalized));
+        assert_eq!(outcome.block.render(), vec!["/** TODO: fix it */"]);
+    }
+
+    #[test]
+    fn truncates_block_comment_without_losing_star() {
+        let source = "/**\n * NOTE: one\n * two\n * three\n * four\n */\nlet x = 1;\n";
+        let block = blocks(source).remove(0);
+        let outcome = apply(&block, &CommentConfig::default());
+        assert!(
+            outcome
+                .actions
+                .contains(&Action::Truncated { lines: 4, max: 3 })
+        );
+        assert_eq!(
+            outcome.block.render(),
+            vec![
+                "/**".to_string(),
+                " * NOTE: [cut] one".to_string(),
+                " * two".to_string(),
+                " * three */".to_string(),
             ]
         );
     }

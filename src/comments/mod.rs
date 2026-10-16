@@ -34,9 +34,12 @@ impl Report {
 fn keyword_of(block: &parser::CommentBlock) -> String {
     block
         .contents
-        .first()
+        .iter()
+        .map(|content| content.trim_start())
+        .find(|content| !content.is_empty())
         .map(|content| {
             content
+                .trim_start_matches('*')
                 .trim_start()
                 .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_')
                 .next()
@@ -199,7 +202,7 @@ pub fn print_report(report: &Report, write: bool) {
 
     if !write {
         println!(
-            "[goh] {} issue(s) found, nothing changed (run with --write to fix)",
+            "[goh] {} issue(s) found, nothing changed (run with 'goh comments --write' to fix)",
             report.findings.len()
         );
         return;
@@ -223,6 +226,7 @@ mod tests {
             line: &["//"],
             block: true,
             html: false,
+            jsdoc: true,
         }
     }
 
@@ -298,6 +302,15 @@ mod tests {
         let (output, findings) = run(source);
         assert_eq!(output, None);
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn normalized_keyword_is_named_in_report() {
+        let source = "/** to-do: fix */\nlet x = 1;\n";
+        let (output, findings) = run(source);
+        assert_eq!(output.as_deref(), Some("/** TODO: fix */\nlet x = 1;\n"));
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].keyword, "TODO");
     }
 
     #[test]

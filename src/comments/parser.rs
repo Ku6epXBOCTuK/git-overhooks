@@ -4,6 +4,7 @@ pub struct Syntax {
     pub line: &'static [&'static str],
     pub block: bool,
     pub html: bool,
+    pub jsdoc: bool,
 }
 
 const SLASH: &[&str] = &["//"];
@@ -18,20 +19,29 @@ const HTML_CLOSE: &str = "-->";
 pub fn syntax_for(path: &Path) -> Option<Syntax> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
 
-    let (line, block, html): (&[&str], bool, bool) = match ext.as_str() {
-        "rs" | "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs" | "go" | "c" | "h"
-        | "cc" | "cpp" | "hpp" | "java" | "kt" | "kts" | "cs" | "swift" | "scala" | "php" | "m"
-        | "mm" | "dart" | "zig" | "groovy" | "gradle" => (SLASH, true, false),
-        "css" | "scss" | "sass" | "less" => (SLASH, true, false),
-        "svelte" | "vue" | "astro" | "html" | "htm" | "xml" | "svg" => (SLASH, true, true),
+    let (line, block, html, jsdoc): (&[&str], bool, bool, bool) = match ext.as_str() {
+        "rs" => (SLASH, true, false, false),
+        "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs" => (SLASH, true, false, true),
+        "go" | "c" | "h" | "cc" | "cpp" | "hpp" | "java" | "kt" | "kts" | "cs" | "swift"
+        | "scala" | "php" | "m" | "mm" | "dart" | "zig" | "groovy" | "gradle" => {
+            (SLASH, true, false, false)
+        }
+        "css" | "scss" | "sass" | "less" => (SLASH, true, false, false),
+        "svelte" | "vue" | "astro" => (SLASH, true, true, true),
+        "html" | "htm" | "xml" | "svg" => (SLASH, true, true, false),
         "py" | "rb" | "sh" | "bash" | "zsh" | "fish" | "ps1" | "toml" | "yaml" | "yml" | "pl"
         | "pm" | "r" | "jl" | "ex" | "exs" | "nim" | "make" | "mk" | "tf" | "hcl" | "cfg"
-        | "ini" => (HASH, false, false),
-        "sql" | "lua" | "hs" | "adb" => (DASH, false, false),
+        | "ini" => (HASH, false, false, false),
+        "sql" | "lua" | "hs" | "adb" => (DASH, false, false, false),
         _ => return None,
     };
 
-    Some(Syntax { line, block, html })
+    Some(Syntax {
+        line,
+        block,
+        html,
+        jsdoc,
+    })
 }
 
 const DIRECTIVES: &[&str] = &[
@@ -163,6 +173,68 @@ fn find_trailing_marker<'a>(trimmed: &'a str, markers: &[&'a str]) -> Option<(&'
     best
 }
 
+const JSDOC_TAGS: &[&str] = &[
+    "@param",
+    "@returns",
+    "@return",
+    "@throws",
+    "@type",
+    "@typedef",
+    "@property",
+    "@example",
+    "@deprecated",
+    "@template",
+    "@see",
+    "@extends",
+    "@implements",
+    "@default",
+    "@enum",
+    "@private",
+    "@public",
+];
+
+const JSDOC_LINKS: &[&str] = &["{@link", "{@linkcode", "{@linkplain}"];
+
+/// NOTE: AI often wraps a plain note into a `/** */` block, so the marker alone
+/// is not proof of documentation. A real JSDoc comment always carries a tag, a
+/// type, an intra-doc link or markdown.
+fn is_jsdoc(contents: &[String]) -> bool {
+    contents.iter().any(|line| {
+        let line = strip_block_decoration(line);
+        let line = line.trim();
+
+        if JSDOC_TAGS.iter().any(|tag| line.starts_with(tag)) {
+            return true;
+        }
+        if JSDOC_LINKS.iter().any(|link| line.contains(link)) {
+            return true;
+        }
+        if line.contains("```") || line.contains("http://") || line.contains("https://") {
+            return true;
+        }
+        if line.contains("](") {
+            return true;
+        }
+        has_type_brace(line)
+    })
+}
+
+fn has_type_brace(line: &str) -> bool {
+    let mut rest = line;
+    while let Some(start) = rest.find('{') {
+        let after = &rest[start + 1..];
+        let Some(end) = after.find('}') else {
+            return false;
+        };
+        let inner = &after[..end];
+        if inner.chars().any(|c| c.is_ascii_alphabetic()) {
+            return true;
+        }
+        rest = &after[end + 1..];
+    }
+    false
+}
+
 fn is_doc_comment(trimmed: &str) -> bool {
     trimmed.starts_with("///")
         || trimmed.starts_with("//!")
@@ -199,7 +271,8 @@ fn parse_block_comment(
     close_token: &str,
 ) -> Option<CommentBlock> {
     let first = lines[start];
-    let indent_len = first.len() - first.trim_start().len();
+    let bom_len = first.len() - first.trim_start_matches('\u{feff}').len();
+    let indent_len = bom_len + (first[bom_len..].len() - first[bom_len..].trim_start().len());
     let indent = first[..indent_len].to_string();
     let body = &first[indent_len + marker.len()..];
 
@@ -230,7 +303,7 @@ fn parse_block_comment(
         let line = lines[index];
         match line.find(close_token) {
             Some(position) => {
-                contents.push(strip_block_decoration(&line[..position]));
+                contents.push(clean_content(&line[..position]));
                 let end = index;
                 let close = format!(
                     "{}{}",
@@ -247,7 +320,7 @@ fn parse_block_comment(
                     contents,
                 });
             }
-            None => contents.push(strip_block_decoration(line)),
+            None => contents.push(clean_content(line)),
         }
     }
 }
@@ -258,7 +331,7 @@ pub fn parse(source: &str, syntax: &Syntax) -> Vec<CommentBlock> {
     let mut index = 0;
 
     while index < lines.len() {
-        let trimmed = lines[index].trim_start();
+        let trimmed = lines[index].trim_start_matches('\u{feff}').trim_start();
 
         if index == 0 && trimmed.starts_with("#!") {
             index += 1;
@@ -279,7 +352,18 @@ pub fn parse(source: &str, syntax: &Syntax) -> Vec<CommentBlock> {
 
         if trimmed.starts_with(BLOCK_OPEN) && syntax.block {
             if trimmed.starts_with("/**") || trimmed.starts_with("/*!") {
-                index = skip_block(&lines, index);
+                match parse_block_comment(&lines, index, BLOCK_OPEN, BLOCK_CLOSE) {
+                    Some(block) if syntax.jsdoc && is_jsdoc(&block.contents) => {
+                        index = skip_block(&lines, index);
+                    }
+                    Some(block) => {
+                        index = block.end + 1;
+                        if !is_directive(&block.contents[0]) {
+                            blocks.push(block);
+                        }
+                    }
+                    None => index = skip_block(&lines, index),
+                }
                 continue;
             }
             match parse_block_comment(&lines, index, BLOCK_OPEN, BLOCK_CLOSE) {
@@ -381,6 +465,7 @@ mod tests {
             line: SLASH,
             block: true,
             html: false,
+            jsdoc: false,
         }
     }
 
@@ -389,6 +474,7 @@ mod tests {
             line: HASH,
             block: false,
             html: false,
+            jsdoc: false,
         }
     }
 
@@ -397,6 +483,16 @@ mod tests {
             line: SLASH,
             block: true,
             html: true,
+            jsdoc: false,
+        }
+    }
+
+    fn script() -> Syntax {
+        Syntax {
+            line: SLASH,
+            block: true,
+            html: false,
+            jsdoc: true,
         }
     }
 
@@ -412,7 +508,7 @@ mod tests {
 
     #[test]
     fn skips_doc_comments() {
-        let source = "/// doc\n//! module\n/**\n * block\n */\n// real\n";
+        let source = "/// doc\n//! module\n// real\n";
         let blocks = parse(source, &slash());
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].contents, vec![" real"]);
@@ -440,6 +536,22 @@ mod tests {
         let blocks = parse(source, &hash());
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].contents, vec![" NOTE: run", " code"]);
+    }
+
+    #[test]
+    fn byte_order_mark_is_ignored() {
+        let source = "\u{feff}// NOTE: keep\nlet x = 1;\n";
+        let blocks = parse(source, &slash());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].contents, vec![" NOTE: keep"]);
+    }
+
+    #[test]
+    fn byte_order_mark_before_jsdoc() {
+        let source = "\u{feff}/** to-do: fix */\nlet x = 1;\n";
+        let blocks = parse(source, &script());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].contents, vec!["* to-do: fix "]);
     }
 
     #[test]
@@ -473,10 +585,63 @@ mod tests {
     }
 
     #[test]
-    fn jsdoc_block_is_skipped() {
-        let source = "/**\n * doc\n */\nlet x = 1;\n";
-        let blocks = parse(source, &slash());
+    fn jsdoc_with_tag_is_skipped() {
+        let source = "/**\n * @param {string} a - x\n * @returns {void}\n */\nlet x = 1;\n";
+        let blocks = parse(source, &script());
         assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn jsdoc_with_deprecated_is_skipped() {
+        let source = "/** @deprecated use b */\nlet x = 1;\n";
+        let blocks = parse(source, &script());
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn jsdoc_with_code_sample_is_skipped() {
+        let source = "/**\n * Example:\n * ```js\n * a();\n * ```\n */\nlet x = 1;\n";
+        let blocks = parse(source, &script());
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn jsdoc_with_link_is_skipped() {
+        let source = "/** see {@link helper} for details */\nlet x = 1;\n";
+        let blocks = parse(source, &script());
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn prose_jsdoc_is_collected() {
+        let source = "/**\n * Formats a date.\n */\nlet x = 1;\n";
+        let blocks = parse(source, &script());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].render()[0], "/**");
+        assert!(blocks[0].render().last().unwrap().ends_with("*/"));
+    }
+
+    #[test]
+    fn jsdoc_wrapped_note_is_collected() {
+        let source = "/** to-do: fix it */\nlet x = 1;\n";
+        let blocks = parse(source, &script());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].contents, vec!["* to-do: fix it "]);
+        assert_eq!(blocks[0].render(), vec!["/** to-do: fix it */"]);
+    }
+
+    #[test]
+    fn terse_block_is_treated_as_directive() {
+        let source = "/*! terse */\nlet x = 1;\n";
+        let blocks = parse(source, &script());
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn jsdoc_is_untouched_outside_script() {
+        let source = "/** @param {string} a */\nlet x = 1;\n";
+        let blocks = parse(source, &slash());
+        assert_eq!(blocks.len(), 1);
     }
 
     #[test]
