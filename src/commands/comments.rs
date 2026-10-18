@@ -10,6 +10,10 @@ pub struct CommentsArgs {
     #[arg(long)]
     all: bool,
 
+    /// Check only staged files (the set the pre-commit hook sees)
+    #[arg(long, conflicts_with = "all")]
+    staged: bool,
+
     /// Rewrite files instead of only reporting
     #[arg(long)]
     write: bool,
@@ -34,7 +38,7 @@ fn git(root: &PathBuf, args: &[&str]) -> Result<Vec<String>, AppError> {
         .collect())
 }
 
-fn collect_files(root: &PathBuf, all: bool) -> Result<Vec<String>, AppError> {
+fn collect_files(root: &PathBuf, all: bool, staged: bool) -> Result<Vec<String>, AppError> {
     let mut set = BTreeSet::new();
 
     if all {
@@ -49,6 +53,10 @@ fn collect_files(root: &PathBuf, all: bool) -> Result<Vec<String>, AppError> {
         &["diff", "--cached", "--name-only", "--diff-filter=ACMR"],
     )? {
         set.insert(file);
+    }
+
+    if staged {
+        return Ok(set.into_iter().collect());
     }
     for file in git(root, &["ls-files", "--modified"])? {
         set.insert(file);
@@ -78,7 +86,7 @@ fn repo_root() -> Result<PathBuf, AppError> {
 pub fn command_comments(args: CommentsArgs) -> Result<(), AppError> {
     let root = repo_root()?;
 
-    let files = collect_files(&root, args.all)?;
+    let files = collect_files(&root, args.all, args.staged)?;
     debug!("files: {}", files.len());
 
     let report = comments::run(&root, &files, args.write)?;
