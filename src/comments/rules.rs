@@ -1,18 +1,121 @@
 use super::{config::CommentConfig, parser::CommentBlock};
 
-fn mark_truncated(head: &str) -> String {
-    let prefix_len = head.len() - head_text(head).len();
-    let trimmed = &head[prefix_len..];
-    let label_end = match trimmed.find(':') {
-        Some(index) => index + 1,
-        None => first_word(trimmed).len(),
+#[derive(Debug, Clone)]
+pub struct Head {
+    pub word: String,
+    pub word_end: usize,
+    pub zone_start: usize,
+    pub zone_end: usize,
+}
+
+fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'
+}
+
+/// NOTE: decorations are the wrappers people put around a keyword
+/// (`**NOTE**`, `[NOTE]`, `- NOTE`, `1. NOTE`); they are recognized and
+/// dropped, so the keyword itself is what decides the block.
+fn decoration_len(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+
+    if text.starts_with("**") {
+        return Some(2);
+    }
+
+    match bytes.first() {
+        Some(b'*') => Some(1),
+        Some(b'[') => Some(1),
+        Some(b'-') => {
+            if bytes.get(1).is_some_and(|byte| is_word_byte(*byte)) {
+                None
+            } else {
+                Some(1)
+            }
+        }
+        _ => {
+            let digits = bytes
+                .iter()
+                .take_while(|byte| byte.is_ascii_digit())
+                .count();
+            if digits > 0 && bytes.get(digits) == Some(&b'.') {
+                Some(digits + 1)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn parse_head(line: &str, is_block: bool) -> Option<Head> {
+    let bytes = line.as_bytes();
+    let mut index = 0;
+
+    while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+        index += 1;
+    }
+
+    // NOTE: the leading star of a block comment belongs to the block style,
+    // not to the keyword, so it is kept as part of the prefix.
+    if is_block && bytes.get(index) == Some(&b'*') {
+        index += 1;
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+    }
+
+    let mut zone_start = None;
+    let mut closing = "";
+
+    while let Some(len) = decoration_len(&line[index..]) {
+        zone_start.get_or_insert(index);
+        closing = match &line[index..index + len] {
+            "**" => "**",
+            "*" => "*",
+            "[" => "]",
+            _ => "",
+        };
+        index += len;
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+    }
+
+    if index >= bytes.len() {
+        return None;
+    }
+
+    let word_start = index;
+    let mut word_end = index;
+    while word_end < bytes.len() && is_word_byte(bytes[word_end]) {
+        word_end += 1;
+    }
+
+    let mut zone_end = word_end;
+    if !closing.is_empty() && line[word_end..].starts_with(closing) {
+        zone_end += closing.len();
+    }
+
+    Some(Head {
+        word: line[word_start..word_end].to_string(),
+        word_end,
+        zone_start: zone_start.unwrap_or(word_start),
+        zone_end,
+    })
+}
+
+fn mark_truncated(line: &str, is_block: bool) -> String {
+    let label_end = match parse_head(line, is_block) {
+        Some(head) if !head.word.is_empty() => {
+            let mut end = head.word_end;
+            if line[end..].starts_with(':') {
+                end += 1;
+            }
+            end
+        }
+        _ => line.find(':').map(|index| index + 1).unwrap_or(0),
     };
-    format!(
-        "{}{} [cut]{}",
-        &head[..prefix_len],
-        &trimmed[..label_end],
-        &trimmed[label_end..]
-    )
+
+    format!("{} [cut]{}", &line[..label_end], &line[label_end..])
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,30 +139,6 @@ pub struct Outcome {
     pub keyword: Option<Keyword>,
 }
 
-fn head_text(content: &str) -> &str {
-    let trimmed = content.trim_start();
-    if let Some(stripped) = trimmed.strip_prefix('*') {
-        stripped.trim_start()
-    } else {
-        trimmed
-    }
-}
-
-fn first_word(content: &str) -> &str {
-    let trimmed = head_text(content);
-    let end = trimmed
-        .find(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
-        .unwrap_or(trimmed.len());
-    &trimmed[..end]
-}
-
-fn strip_trailing_punctuation(mut word: String) -> String {
-    while word.ends_with(':') || word.ends_with('!') {
-        word.pop();
-    }
-    word
-}
-
 pub fn apply(block: &CommentBlock, config: &CommentConfig) -> Outcome {
     let mut contents = block.contents.clone();
 
@@ -68,32 +147,40 @@ pub fn apply(block: &CommentBlock, config: &CommentConfig) -> Outcome {
     }
 
     let mut actions = Vec::new();
+    let is_block = block.close.is_some();
 
     let head = contents
         .iter()
-        .position(|line| !head_text(line).is_empty())
+        .position(|line| parse_head(line, is_block).is_some())
         .unwrap_or(0);
 
-    let raw_word = strip_trailing_punctuation(first_word(&contents[head]).to_string());
+    let head_info = parse_head(&contents[head], is_block);
 
-    let keyword = match config.canonical_keyword(&raw_word) {
-        Some(canonical) => {
-            if canonical != raw_word {
-                let span = contents[head].find(&raw_word).unwrap_or(0);
-                let rest = &contents[head][span + raw_word.len()..];
-                let mut rebuilt = String::with_capacity(contents[head].len());
-                rebuilt.push_str(&contents[head][..span]);
-                rebuilt.push_str(&canonical);
-                rebuilt.push_str(rest);
-                contents[head] = rebuilt;
-                actions.push(Action::Normalized);
+    let keyword = match &head_info {
+        Some(info) => match config.canonical_keyword(&info.word) {
+            Some(canonical) => {
+                let line = contents[head].clone();
+                let zone = line[info.zone_start..info.zone_end].to_string();
+
+                if zone != canonical {
+                    let mut rebuilt = String::with_capacity(line.len());
+                    rebuilt.push_str(&line[..info.zone_start]);
+                    rebuilt.push_str(&canonical);
+                    rebuilt.push_str(&line[info.zone_end..]);
+                    contents[head] = rebuilt;
+                    actions.push(Action::Normalized);
+                }
+
+                Some(Keyword {
+                    raw: zone,
+                    canonical,
+                })
             }
-
-            Some(Keyword {
-                raw: raw_word,
-                canonical,
-            })
-        }
+            None => {
+                actions.push(Action::NoKeyword);
+                None
+            }
+        },
         None => {
             actions.push(Action::NoKeyword);
             None
@@ -108,7 +195,7 @@ pub fn apply(block: &CommentBlock, config: &CommentConfig) -> Outcome {
 
     if contents.len() - head > max {
         let lines = contents.len() - head;
-        let marked = mark_truncated(&contents[head]);
+        let marked = mark_truncated(&contents[head], is_block);
         let mut truncated = contents[..head].to_vec();
         truncated.push(marked);
         truncated.extend(contents[head + 1..head + max].iter().cloned());
@@ -160,17 +247,19 @@ mod tests {
         text
     }
 
+    fn outcome(source: &str) -> Outcome {
+        apply(&blocks(source).remove(0), &CommentConfig::default())
+    }
+
     #[test]
     fn removes_comment_without_keyword() {
-        let source = "// just a comment\nlet x = 1;\n";
-        let outcome = apply(&blocks(source).remove(0), &CommentConfig::default());
+        let outcome = outcome("// just a comment\nlet x = 1;\n");
         assert!(outcome.actions.contains(&Action::NoKeyword));
     }
 
     #[test]
     fn keeps_note() {
-        let source = "// NOTE: keep\n";
-        let outcome = apply(&blocks(source).remove(0), &CommentConfig::default());
+        let outcome = outcome("// NOTE: keep\n");
         assert_eq!(outcome.actions, Vec::new());
         assert_eq!(outcome.block.render(), vec!["// NOTE: keep"]);
     }
@@ -184,8 +273,7 @@ mod tests {
             ("// FixMe: x\n", "// FIXME: x\n"),
         ];
         for (source, expected) in cases {
-            let block = blocks(source).remove(0);
-            let outcome = apply(&block, &CommentConfig::default());
+            let outcome = outcome(source);
             assert!(outcome.actions.contains(&Action::Normalized), "{source}");
             assert_eq!(outcome.block.render().remove(0), expected.trim_end());
         }
@@ -194,8 +282,7 @@ mod tests {
     #[test]
     fn truncates_to_three_lines_with_note() {
         let source = "// NOTE: one\n// two\n// three\n// four\n// five\n";
-        let block = blocks(source).remove(0);
-        let outcome = apply(&block, &CommentConfig::default());
+        let outcome = outcome(source);
         assert_eq!(
             outcome.actions,
             vec![Action::Truncated { lines: 5, max: 3 }]
@@ -213,8 +300,7 @@ mod tests {
     #[test]
     fn normalizes_keyword_inside_block_comment() {
         let source = "/** to-do: fix it */\nlet x = 1;\n";
-        let block = blocks(source).remove(0);
-        let outcome = apply(&block, &CommentConfig::default());
+        let outcome = outcome(source);
         assert!(outcome.actions.contains(&Action::Normalized));
         assert_eq!(outcome.block.render(), vec!["/** TODO: fix it */"]);
     }
@@ -222,8 +308,7 @@ mod tests {
     #[test]
     fn truncates_block_comment_without_losing_star() {
         let source = "/**\n * NOTE: one\n * two\n * three\n * four\n */\nlet x = 1;\n";
-        let block = blocks(source).remove(0);
-        let outcome = apply(&block, &CommentConfig::default());
+        let outcome = outcome(source);
         assert!(
             outcome
                 .actions
@@ -242,9 +327,7 @@ mod tests {
 
     #[test]
     fn detects_non_ascii() {
-        let source = "// NOTE: привет\n";
-        let block = blocks(source).remove(0);
-        let outcome = apply(&block, &CommentConfig::default());
+        let outcome = outcome("// NOTE: привет\n");
         assert!(outcome.actions.contains(&Action::NonAscii));
         assert_eq!(outcome.actions.len(), 1);
     }
@@ -252,8 +335,7 @@ mod tests {
     #[test]
     fn reports_length_and_keyword_together() {
         let source = "// plain text\n// second\n// third\n// fourth\n";
-        let block = blocks(source).remove(0);
-        let outcome = apply(&block, &CommentConfig::default());
+        let outcome = outcome(source);
         assert!(outcome.actions.contains(&Action::NoKeyword));
         assert!(
             outcome
@@ -265,14 +347,56 @@ mod tests {
     #[test]
     fn reports_non_ascii_and_length_together() {
         let source = "// NOTE: привет\n// second\n// third\n// fourth\n";
-        let block = blocks(source).remove(0);
-        let outcome = apply(&block, &CommentConfig::default());
+        let outcome = outcome(source);
         assert!(outcome.actions.contains(&Action::NonAscii));
         assert!(
             outcome
                 .actions
                 .contains(&Action::Truncated { lines: 4, max: 3 })
         );
+    }
+
+    #[test]
+    fn recognizes_decorated_keywords() {
+        let cases = [
+            ("// **NOTE**: x\n", "// NOTE: x\n"),
+            ("// *NOTE*: x\n", "// NOTE: x\n"),
+            ("// [NOTE]: x\n", "// NOTE: x\n"),
+            ("// [TODO]: x\n", "// TODO: x\n"),
+            ("// - TODO: x\n", "// TODO: x\n"),
+            ("// 1. FIXME: x\n", "// FIXME: x\n"),
+            ("// 2. to-do: x\n", "// TODO: x\n"),
+        ];
+
+        for (source, expected) in cases {
+            let outcome = outcome(source);
+            assert!(!outcome.actions.contains(&Action::NoKeyword), "{source}");
+            assert!(outcome.actions.contains(&Action::Normalized), "{source}");
+            assert_eq!(outcome.block.render().remove(0), expected.trim_end());
+        }
+    }
+
+    #[test]
+    fn keeps_block_star_when_dropping_decorations() {
+        let source = "/** **NOTE**: x */\nlet x = 1;\n";
+        let outcome = outcome(source);
+        assert!(outcome.actions.contains(&Action::Normalized));
+        assert_eq!(outcome.block.render(), vec!["/** NOTE: x */"]);
+    }
+
+    #[test]
+    fn keyword_on_the_second_line_is_ignored() {
+        let source = "// plain text\n// NOTE: x\n";
+        let outcome = outcome(source);
+        assert!(outcome.actions.contains(&Action::NoKeyword));
+    }
+
+    #[test]
+    fn decoration_only_line_is_skipped() {
+        let source = "// **\n// NOTE: x\n";
+        let outcome = outcome(source);
+        assert_eq!(outcome.actions, Vec::new());
+        assert_eq!(outcome.block.render(), vec!["// **", "// NOTE: x"]);
     }
 
     #[test]
