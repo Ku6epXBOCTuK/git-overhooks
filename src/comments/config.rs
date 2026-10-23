@@ -5,8 +5,7 @@ use serde::Deserialize;
 
 use crate::error::AppError;
 
-pub const CONFIG_FILE: &str = "goh.toml";
-pub const IGNORE_FILE: &str = ".gohignore";
+pub use crate::common::{CONFIG_FILE, IGNORE_FILE};
 
 pub const DEFAULT_CONFIG: &str = r#"[comments]
 max_lines = 3

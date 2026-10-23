@@ -10,10 +10,14 @@ use tracing::info;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::fmt::time::ChronoLocal;
 
+mod check;
 mod commands;
 mod comments;
 mod common;
 mod error;
+mod git_util;
+mod ignore;
+mod walk;
 
 fn setup() -> Result<(), AppError> {
     let path = dirs::home_dir().ok_or(AppError::HomeNotFound)?;

@@ -9,6 +9,9 @@ use crate::error::AppError;
 pub const HOOKS_DIR: &str = "hooks.d";
 pub const BIN_DIR: &str = "bin";
 
+pub const CONFIG_FILE: &str = "goh.toml";
+pub const IGNORE_FILE: &str = ".gohignore";
+
 pub const GIT_HOOKS: &[&str] = &[
     "pre-commit",
     "prepare-commit-msg",

@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
-use super::ignore::Ignores;
+use crate::ignore::Ignores;
 
 /// NOTE: huge files are not read, so a stray archive cannot stall the walk.
 const MAX_FILE_SIZE: u64 = 1024 * 1024;
@@ -132,7 +132,7 @@ fn is_too_big(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::comments::ignore::{Ignores, Pattern};
+    use crate::ignore::{Ignores, Pattern};
 
     fn ignores(patterns: &[&str]) -> Ignores {
         Ignores {

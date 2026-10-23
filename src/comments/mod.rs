@@ -1,19 +1,15 @@
 pub mod config;
-pub mod ignore;
 pub mod parser;
 pub mod rules;
 pub mod strings;
-pub mod walk;
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 
-use crate::error::AppError;
+use crate::{check, error::AppError, ignore::Ignores};
 
 use config::CommentConfig;
-use ignore::Ignores;
-use parser::{Syntax, syntax_for};
+use parser::Syntax;
 use rules::Action;
 
 #[derive(Debug)]
@@ -121,37 +117,12 @@ pub fn process_source(
     (Some(output), findings)
 }
 
-fn read_staged_content(root: &Path, file: &str) -> Result<Option<String>, AppError> {
-    let output = Command::new("git")
-        .args(["show", &format!(":{file}")])
-        .current_dir(root)
-        .output()
-        .map_err(|_| AppError::GitError)?;
-
-    if !output.status.success() {
-        return Ok(None);
-    }
-
-    // NOTE: binary staged content is skipped just like an unreadable working-tree
-    // file, so it never produces replacement characters in the report.
-    match String::from_utf8(output.stdout) {
-        Ok(source) => Ok(Some(source)),
-        Err(_) => Ok(None),
-    }
-}
-
 pub fn load_config(root: &Path) -> Result<CommentConfig, AppError> {
     let global = crate::common::APP_DIR
         .get()
         .map(|dir| dir.join(config::CONFIG_FILE));
     let project = root.join(config::CONFIG_FILE);
     CommentConfig::load(global.as_deref(), Some(&project))
-}
-
-fn global_ignore_path() -> PathBuf {
-    crate::common::APP_DIR
-        .get()
-        .map_or_default(|dir| dir.join(config::IGNORE_FILE))
 }
 
 pub fn run(
@@ -162,9 +133,9 @@ pub fn run(
     remove: bool,
 ) -> Result<Report, AppError> {
     let config = load_config(root)?;
-    let ignores = Ignores::load(root, &global_ignore_path());
+    let ignores = check::goh_ignores(root);
 
-    let mut filter = walk::NestedFilter::new();
+    let mut filter = crate::walk::NestedFilter::new();
     let mut skipped: BTreeSet<String> = BTreeSet::new();
     let mut kept: Vec<String> = Vec::new();
 
@@ -185,8 +156,8 @@ pub fn run(
 
 pub fn run_all(root: &Path, write: bool, staged: bool, remove: bool) -> Result<Report, AppError> {
     let config = load_config(root)?;
-    let ignores = Ignores::load(root, &global_ignore_path());
-    let walked = walk::collect(root, &ignores);
+    let ignores = check::goh_ignores(root);
+    let walked = crate::walk::collect(root, &ignores);
 
     let mut report = run_with(
         root,
@@ -211,42 +182,14 @@ fn run_with(
     staged: bool,
     remove: bool,
 ) -> Result<Report, AppError> {
-    let mut findings = Vec::new();
-    let mut changed_files = 0;
-
-    for file in files {
-        if ignores.matches(file) {
-            continue;
-        }
-        let Some(syntax) = syntax_for(&root.join(file)) else {
-            continue;
-        };
-        let path = root.join(file);
-        let source = if staged {
-            // NOTE: read staged content from the git index (not the working
-            // tree) so the check reviews exactly what will be committed.
-            read_staged_content(root, file)?
-        } else {
-            std::fs::read_to_string(&path).ok()
-        };
-
-        let Some(source) = source else {
-            continue;
-        };
-
-        let (output, mut found) = process_source(&source, file, &syntax, config, remove);
-
-        if output.is_some() {
-            changed_files += 1;
-        }
-        findings.append(&mut found);
-
-        if let Some(output) = output
-            && write
-        {
-            std::fs::write(&path, output)?;
-        }
-    }
+    let (findings, changed_files) = check::scan_files(
+        root,
+        files,
+        ignores,
+        staged,
+        write,
+        |file, syntax, source| process_source(source, file, syntax, config, remove),
+    )?;
 
     Ok(Report {
         findings,
@@ -553,7 +496,8 @@ mod tests {
         std::fs::write(&file, "// NOTE: keep\nfn main() {}\n").unwrap();
 
         // NOTE: Worktree now has a NOTE (unstaged), index has a comment without a keyword (staged).
-        let staged = read_staged_content(&root, "foo.rs").expect("read staged content");
+        let staged =
+            crate::git_util::read_staged_content(&root, "foo.rs").expect("read staged content");
         assert!(
             staged
                 .as_deref()
