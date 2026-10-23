@@ -18,36 +18,20 @@ pub struct Finding {
     pub file: String,
     pub line: usize,
     pub action: Action,
-    pub keyword: String,
+    pub keyword: Option<String>,
+    pub original: Option<String>,
 }
 
 pub struct Report {
     pub findings: Vec<Finding>,
     pub changed_files: usize,
+    pub keywords: Vec<String>,
 }
 
 impl Report {
     pub fn failed(&self) -> bool {
         !self.findings.is_empty()
     }
-}
-
-fn keyword_of(block: &parser::CommentBlock) -> String {
-    block
-        .contents
-        .iter()
-        .map(|content| content.trim_start())
-        .find(|content| !content.is_empty())
-        .map(|content| {
-            content
-                .trim_start_matches('*')
-                .trim_start()
-                .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_')
-                .next()
-                .unwrap_or("")
-                .to_string()
-        })
-        .unwrap_or_default()
 }
 
 pub fn process_source(
@@ -68,14 +52,16 @@ pub fn process_source(
 
     for block in blocks.iter().rev() {
         let outcome = rules::apply(block, config);
-        let keyword = keyword_of(&outcome.block);
+        let keyword = outcome.keyword.as_ref().map(|k| k.canonical.clone());
+        let original = outcome.keyword.as_ref().map(|k| k.raw.clone());
 
         if outcome.actions.contains(&Action::Removed) {
             findings.push(Finding {
                 file: file.to_string(),
                 line: block.start + 1,
                 action: Action::Removed,
-                keyword,
+                keyword: None,
+                original: None,
             });
 
             // NOTE: deletion is destructive and carries meaning of its own, so
@@ -104,6 +90,7 @@ pub fn process_source(
                         line: block.start + 1,
                         action: action.clone(),
                         keyword: keyword.clone(),
+                        original: original.clone(),
                     });
                 }
                 Action::NonAscii => findings.push(Finding {
@@ -111,6 +98,7 @@ pub fn process_source(
                     line: block.start + 1,
                     action: Action::NonAscii,
                     keyword: keyword.clone(),
+                    original: original.clone(),
                 }),
                 _ => {}
             }
@@ -212,7 +200,62 @@ pub fn run(
     Ok(Report {
         findings,
         changed_files,
+        keywords: config
+            .keywords
+            .iter()
+            .map(|keyword| keyword.canonical.clone())
+            .collect(),
     })
+}
+
+fn expected_keywords(keywords: &[String]) -> String {
+    let list: Vec<String> = keywords
+        .iter()
+        .map(|keyword| format!("{keyword}:"))
+        .collect();
+    match list.len() {
+        0 => "a keyword".to_string(),
+        1 => list[0].clone(),
+        _ => format!(
+            "{} or {}",
+            list[..list.len() - 1].join(", "),
+            list[list.len() - 1]
+        ),
+    }
+}
+
+fn describe(finding: &Finding, expected: &str, write: bool, remove: bool) -> String {
+    match &finding.action {
+        Action::Removed => {
+            let outcome = if write && remove {
+                "the whole block was removed"
+            } else if remove {
+                "the whole block would be removed"
+            } else {
+                "the block is kept, removal needs --remove"
+            };
+            format!("no keyword at the start of the comment: expected {expected} - {outcome}")
+        }
+        Action::Normalized => {
+            let original = finding.original.as_deref().unwrap_or_default();
+            let canonical = finding.keyword.as_deref().unwrap_or_default();
+            format!("keyword normalized: '{original}' -> '{canonical}'")
+        }
+        Action::Truncated { lines, max } => {
+            let outcome = if write {
+                format!("cut to {max} lines")
+            } else {
+                format!("will be cut to {max} lines")
+            };
+            format!(
+                "comment too long: {lines} lines > max_lines = {max} - {outcome} (marker [cut])"
+            )
+        }
+        Action::NonAscii => {
+            let keyword = finding.keyword.as_deref().unwrap_or("without keyword");
+            format!("non-ascii characters in comment (keyword {keyword})")
+        }
+    }
 }
 
 pub fn print_report(report: &Report, write: bool, remove: bool) {
@@ -221,28 +264,10 @@ pub fn print_report(report: &Report, write: bool, remove: bool) {
         return;
     }
 
+    let expected = expected_keywords(&report.keywords);
+
     for finding in &report.findings {
-        let message = match &finding.action {
-            Action::Removed => {
-                if write && remove {
-                    "comment removed (no keyword)".to_string()
-                } else if remove {
-                    "comment without keyword: the block would be removed (run with 'goh comments --write --remove')".to_string()
-                } else {
-                    "comment without keyword: the block is kept (removal needs --remove)"
-                        .to_string()
-                }
-            }
-            Action::Normalized => format!("keyword normalized: {}", finding.keyword),
-            Action::Truncated { lines, max } => {
-                if write {
-                    format!("comment too long: {lines} lines, cut to max_lines = {max}")
-                } else {
-                    format!("comment too long: {lines} lines > max_lines = {max}")
-                }
-            }
-            Action::NonAscii => format!("non-ascii text in {}", finding.keyword),
-        };
+        let message = describe(finding, &expected, write, remove);
         println!("[goh] {}:{}: {message}", finding.file, finding.line);
     }
 
@@ -256,11 +281,11 @@ pub fn print_report(report: &Report, write: bool, remove: bool) {
 
     if report.changed_files > 0 {
         println!(
-            "[goh] {} file(s) rewritten. Nothing was staged. Review with git diff, stage and commit again.",
+            "[goh] {} file(s) rewritten in the working tree. Nothing was staged: review with git diff, stage and commit again.",
             report.changed_files
         );
     }
-    println!("[goh] Commit aborted.");
+    println!("[goh] Commit aborted: nothing was staged, review with git diff.");
 }
 
 #[cfg(test)]
@@ -370,7 +395,8 @@ mod tests {
         let (output, findings) = run(source);
         assert_eq!(output.as_deref(), Some("/** TODO: fix */\nlet x = 1;\n"));
         assert_eq!(findings.len(), 1);
-        assert_eq!(findings[0].keyword, "TODO");
+        assert_eq!(findings[0].keyword.as_deref(), Some("TODO"));
+        assert_eq!(findings[0].original.as_deref(), Some("to-do"));
     }
 
     #[test]
@@ -446,6 +472,28 @@ mod tests {
         let report = comments::run(&root, &files, false, true, false).unwrap();
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].action, Action::Removed);
-        assert_eq!(report.findings[0].keyword, "just");
+        assert!(report.findings[0].keyword.is_none());
+    }
+
+    fn finding(action: Action, keyword: Option<&str>, original: Option<&str>) -> Finding {
+        Finding {
+            file: "a.rs".to_string(),
+            line: 1,
+            action,
+            keyword: keyword.map(str::to_string),
+            original: original.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn normalized_message_keeps_the_original_spelling() {
+        let message = describe(
+            &finding(Action::Normalized, Some("TODO"), Some("todo")),
+            "NOTE:, TODO: or FIXME:",
+            false,
+            false,
+        );
+        assert!(message.contains("'todo'"), "{message}");
+        assert!(message.contains("'TODO'"), "{message}");
     }
 }

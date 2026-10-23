@@ -24,9 +24,16 @@ pub enum Action {
 }
 
 #[derive(Debug, Clone)]
+pub struct Keyword {
+    pub raw: String,
+    pub canonical: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct Outcome {
     pub block: CommentBlock,
     pub actions: Vec<Action>,
+    pub keyword: Option<Keyword>,
 }
 
 fn head_text(content: &str) -> &str {
@@ -69,7 +76,7 @@ pub fn apply(block: &CommentBlock, config: &CommentConfig) -> Outcome {
 
     let raw_word = strip_trailing_punctuation(first_word(&contents[head]).to_string());
 
-    let Some(keyword) = config.canonical_keyword(&raw_word) else {
+    let Some(canonical) = config.canonical_keyword(&raw_word) else {
         actions.push(Action::Removed);
         return Outcome {
             block: CommentBlock {
@@ -77,15 +84,21 @@ pub fn apply(block: &CommentBlock, config: &CommentConfig) -> Outcome {
                 ..block.clone()
             },
             actions,
+            keyword: None,
         };
     };
 
-    if keyword != raw_word {
+    let keyword = Keyword {
+        raw: raw_word.clone(),
+        canonical: canonical.clone(),
+    };
+
+    if canonical != raw_word {
         let span = contents[head].find(&raw_word).unwrap_or(0);
         let rest = &contents[head][span + raw_word.len()..];
         let mut rebuilt = String::with_capacity(contents[head].len());
         rebuilt.push_str(&contents[head][..span]);
-        rebuilt.push_str(&keyword);
+        rebuilt.push_str(&canonical);
         rebuilt.push_str(rest);
         contents[head] = rebuilt;
         actions.push(Action::Normalized);
@@ -113,6 +126,7 @@ pub fn apply(block: &CommentBlock, config: &CommentConfig) -> Outcome {
             ..block.clone()
         },
         actions,
+        keyword: Some(keyword),
     }
 }
 
