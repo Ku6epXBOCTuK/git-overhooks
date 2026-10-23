@@ -61,7 +61,7 @@ pub fn repo_root() -> Result<PathBuf, AppError> {
     Ok(PathBuf::from(text))
 }
 
-pub fn read_staged_content(root: &Path, file: &str) -> Result<Option<String>, AppError> {
+pub fn read_staged_bytes(root: &Path, file: &str) -> Result<Option<Vec<u8>>, AppError> {
     let output = Command::new("git")
         .args(["show", &format!(":{file}")])
         .current_dir(root)
@@ -72,10 +72,5 @@ pub fn read_staged_content(root: &Path, file: &str) -> Result<Option<String>, Ap
         return Ok(None);
     }
 
-    // NOTE: binary staged content is skipped just like an unreadable working-tree
-    // file, so it never produces replacement characters in the report.
-    match String::from_utf8(output.stdout) {
-        Ok(source) => Ok(Some(source)),
-        Err(_) => Ok(None),
-    }
+    Ok(Some(output.stdout))
 }

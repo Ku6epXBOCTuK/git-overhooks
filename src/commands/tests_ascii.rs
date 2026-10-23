@@ -19,6 +19,8 @@ pub struct TestsAsciiArgs {
 
 const SNIPPET_MAX: usize = 60;
 
+type ScanResult = (Vec<Finding>, Vec<String>, Vec<String>);
+
 fn snippet(text: &str) -> String {
     if text.chars().count() <= SNIPPET_MAX {
         return text.to_string();
@@ -35,8 +37,9 @@ fn describe(finding: &Finding) -> String {
     }
 }
 
-fn print_report(findings: &[Finding], skipped: &[String]) {
-    if findings.is_empty() {
+fn print_report(findings: &[Finding], broken: &[String], skipped: &[String]) {
+    let issues = findings.len() + broken.len();
+    if issues == 0 {
         println!("[goh] tests-ascii: ok");
     } else {
         for finding in findings {
@@ -47,7 +50,10 @@ fn print_report(findings: &[Finding], skipped: &[String]) {
                 describe(finding)
             );
         }
-        println!("[goh] {} issue(s) found", findings.len());
+        for file in broken {
+            println!("[goh] {file}: not valid UTF-8, skipped (broken encoding? re-save as UTF-8)");
+        }
+        println!("[goh] {issues} issue(s) found");
     }
 
     for repository in skipped {
@@ -60,9 +66,9 @@ fn scan(
     files: &[String],
     staged: bool,
     skipped: Vec<String>,
-) -> Result<(Vec<Finding>, Vec<String>), AppError> {
+) -> Result<ScanResult, AppError> {
     let ignores = check::goh_ignores(root);
-    let (findings, _) = check::scan_files(
+    let (findings, broken, _) = check::scan_files(
         root,
         files,
         &ignores,
@@ -75,13 +81,13 @@ fn scan(
         },
     )?;
 
-    Ok((findings, skipped))
+    Ok((findings, broken, skipped))
 }
 
 pub fn command_tests_ascii(args: &TestsAsciiArgs) -> Result<(), AppError> {
     let root = repo_root()?;
 
-    let (findings, skipped) = if args.all {
+    let (findings, broken, skipped) = if args.all {
         let walked = walk::collect(&root, &check::goh_ignores(&root));
         scan(
             &root,
@@ -95,9 +101,9 @@ pub fn command_tests_ascii(args: &TestsAsciiArgs) -> Result<(), AppError> {
         scan(&root, &kept, args.staged, skipped)?
     };
 
-    print_report(&findings, &skipped);
+    print_report(&findings, &broken, &skipped);
 
-    if !findings.is_empty() {
+    if !findings.is_empty() || !broken.is_empty() {
         return Err(AppError::HookFailed(1));
     }
 
@@ -161,13 +167,38 @@ mod tests {
             "b.rs".to_string(),
             "c.md".to_string(),
         ];
-        let (findings, _) = scan(&root, &files, false, Vec::new()).unwrap();
+        let (findings, _, _) = scan(&root, &files, false, Vec::new()).unwrap();
         let mut names: Vec<&str> = findings
             .iter()
             .map(|finding| finding.file.as_str())
             .collect();
         names.sort();
         assert_eq!(names, vec!["a.test.ts", "b.rs"]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn broken_encoding_fails_and_video_stays_silent() {
+        // NOTE: cp1251 letters are printable bytes in a wrong codepage - a
+        // broken source; a NUL-padded file is data (MPEG .ts) and stays quiet.
+        let root = std::env::temp_dir().join(format!("goh-broken-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.test.ts"), b"it.todo(\"\xe2\xe2\xe2\")\n").unwrap();
+        std::fs::write(root.join("video.ts"), b"G\x00\x00\x00binary\x00stream").unwrap();
+        std::fs::write(root.join("ok.test.ts"), "it(\"fine\");\n").unwrap();
+
+        set_app_dir("goh-broken-app");
+
+        let files = vec![
+            "a.test.ts".to_string(),
+            "video.ts".to_string(),
+            "ok.test.ts".to_string(),
+        ];
+        let (findings, broken, _) = scan(&root, &files, false, Vec::new()).unwrap();
+        assert_eq!(findings.len(), 0);
+        assert_eq!(broken, vec!["a.test.ts".to_string()]);
 
         let _ = std::fs::remove_dir_all(&root);
     }

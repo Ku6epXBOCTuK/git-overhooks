@@ -36,12 +36,17 @@ node_modules
 bower_components
 .venv
 venv
+vendor
 
 # Build output
 dist
 target
 .next
 .nuxt
+.output
+.svelte-kit
+.angular
+.astro
 .docusaurus
 .turbo
 .serverless
@@ -52,10 +57,17 @@ obj
 .eslintcache
 .tsbuildinfo
 .pytest_cache
+.mypy_cache
+.ruff_cache
+__pycache__
 .rcache
 .nyc_output
 coverage
 .gradle
+.parcel-cache
+.vite
+.expo
+.terraform
 "#;
 
 /// NOTE: lookup ignores case only; punctuation must be listed as an alias,

@@ -56,6 +56,9 @@ enum Commands {
     #    py rb sh bash zsh fish ps1 toml yaml yml pl pm r jl ex exs nim make mk tf hcl cfg ini
     --   sql lua hs adb
   Other files are not checked. Binary and unreadable files are skipped.
+  A checked file that is not valid UTF-8 is a finding: broken encoding,
+  re-save it as UTF-8. Real binaries are recognized by NUL or control bytes
+  (an MPEG video also carries the .ts name) and are skipped silently.
 
 IGNORED PATHS
   core (always): .git, .svn, .hg, .bzr, .DS_Store, Thumbs.db, $RECYCLE.BIN
@@ -115,6 +118,9 @@ CHECKED FILES
     js jsx ts tsx mts cts mjs cjs   (test frameworks: it, test, describe, specify)
     rs                              (Rust: #[test] functions)
   Other files are not checked. Binary and unreadable files are skipped.
+  A checked file that is not valid UTF-8 is a finding: broken encoding,
+  re-save it as UTF-8. Real binaries are recognized by NUL or control bytes
+  (an MPEG video also carries the .ts name) and are skipped silently.
   Nested repositories and ignored paths are skipped like in 'goh comments'.
 
 TITLES

@@ -327,6 +327,19 @@ mod tests {
         assert!(ig.matches("target/debug/main.rs"));
         assert!(ig.matches("dist/app.js"));
         assert!(ig.matches(".venv/lib/python/site-packages/x.py"));
+        assert!(ig.matches("web/.svelte-kit/ambient.d.ts"));
+        assert!(ig.matches("web/.next/server/app.js"));
+        assert!(ig.matches("web/.nuxt/dist/server.js"));
+        assert!(ig.matches("web/.output/server/index.mjs"));
+        assert!(ig.matches("web/.angular/cache/x.js"));
+        assert!(ig.matches("web/.astro/content.d.ts"));
+        assert!(ig.matches("web/.parcel-cache/x.js"));
+        assert!(ig.matches("web/.expo/x.js"));
+        assert!(ig.matches("infra/.terraform/providers/x"));
+        assert!(ig.matches("src/__pycache__/mod.cpython-312.pyc"));
+        assert!(ig.matches("src/.mypy_cache/x"));
+        assert!(ig.matches("src/.ruff_cache/x"));
+        assert!(ig.matches("vendor/lib.go"));
         assert!(!ig.matches("src/main.rs"));
         assert!(!ig.matches("src/env/main.rs"));
     }

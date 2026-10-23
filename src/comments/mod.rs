@@ -22,6 +22,8 @@ pub struct Finding {
 
 pub struct Report {
     pub findings: Vec<Finding>,
+    /// Files with a known text extension that are not valid UTF-8.
+    pub broken_encoding: Vec<String>,
     pub changed_files: usize,
     pub keywords: Vec<String>,
     pub skipped_repositories: Vec<String>,
@@ -29,7 +31,7 @@ pub struct Report {
 
 impl Report {
     pub fn failed(&self) -> bool {
-        !self.findings.is_empty()
+        !self.findings.is_empty() || !self.broken_encoding.is_empty()
     }
 }
 
@@ -169,7 +171,7 @@ fn run_with(
     staged: bool,
     remove: bool,
 ) -> Result<Report, AppError> {
-    let (findings, changed_files) = check::scan_files(
+    let (findings, broken_encoding, changed_files) = check::scan_files(
         root,
         files,
         ignores,
@@ -180,6 +182,7 @@ fn run_with(
 
     Ok(Report {
         findings,
+        broken_encoding,
         changed_files,
         keywords: config
             .keywords
@@ -241,7 +244,8 @@ fn describe(finding: &Finding, expected: &str, write: bool, remove: bool) -> Str
 }
 
 pub fn print_report(report: &Report, write: bool, remove: bool) {
-    if report.findings.is_empty() {
+    let issues = report.findings.len() + report.broken_encoding.len();
+    if issues == 0 {
         println!("[goh] comments: ok");
         print_skipped(report);
         return;
@@ -254,10 +258,13 @@ pub fn print_report(report: &Report, write: bool, remove: bool) {
         println!("[goh] {}:{}: {message}", finding.file, finding.line);
     }
 
+    for file in &report.broken_encoding {
+        println!("[goh] {file}: not valid UTF-8, skipped (broken encoding? re-save as UTF-8)");
+    }
+
     if !write {
         println!(
-            "[goh] {} issue(s) found, nothing changed (run with 'goh comments --write' to apply)",
-            report.findings.len()
+            "[goh] {issues} issue(s) found, nothing changed (run with 'goh comments --write' to apply)"
         );
         print_skipped(report);
         return;
@@ -300,6 +307,21 @@ mod tests {
 
     fn run_with_remove(source: &str) -> (Option<String>, Vec<Finding>) {
         process_source(source, "a.rs", &syntax(), &CommentConfig::default(), true)
+    }
+
+    #[test]
+    fn broken_encoding_is_reported_and_fails() {
+        let root = std::env::temp_dir().join(format!("goh-comments-broken-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("broken.rs"), b"// \xe2\xe2\xe2\n").unwrap();
+
+        let files = vec!["broken.rs".to_string()];
+        let report = comments::run(&root, &files, false, false, false).unwrap();
+        assert_eq!(report.broken_encoding, vec!["broken.rs".to_string()]);
+        assert!(report.failed());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -487,8 +509,11 @@ mod tests {
         std::fs::write(&file, "// NOTE: keep\nfn main() {}\n").unwrap();
 
         // NOTE: Worktree now has a NOTE (unstaged), index has a comment without a keyword (staged).
-        let staged =
-            crate::git_util::read_staged_content(&root, "foo.rs").expect("read staged content");
+        let staged = crate::git_util::read_staged_bytes(&root, "foo.rs")
+            .expect("read staged content")
+            .map(String::from_utf8)
+            .transpose()
+            .expect("staged content is valid UTF-8");
         assert!(
             staged
                 .as_deref()
