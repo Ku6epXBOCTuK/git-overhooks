@@ -48,7 +48,7 @@ fn main() -> Exit {
 
     if let Err(err) = setup() {
         return Exit(Err(err));
-    };
+    }
 
     Exit(run(cli))
 }

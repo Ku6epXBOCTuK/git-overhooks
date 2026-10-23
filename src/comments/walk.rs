@@ -126,9 +126,7 @@ impl NestedFilter {
 }
 
 fn is_too_big(path: &Path) -> bool {
-    std::fs::metadata(path)
-        .map(|meta| meta.len() > MAX_FILE_SIZE)
-        .unwrap_or(false)
+    std::fs::metadata(path).is_ok_and(|meta| meta.len() > MAX_FILE_SIZE)
 }
 
 #[cfg(test)]
@@ -172,7 +170,7 @@ mod tests {
 
         let result = collect(&root, &ignores(&[]));
         assert_eq!(result.files, vec!["a.rs", "src/b.rs"]);
-        assert!(result.skipped_repositories.is_empty());
+        assert_eq!(result.skipped_repositories, [] as [String; 0]);
     }
 
     #[test]
@@ -216,7 +214,11 @@ mod tests {
     fn skips_big_files() {
         let root = temp_dir("goh-walk-test-4");
         write(&root, "a.rs", "// NOTE: a\n");
-        write(&root, "big.rs", &"x".repeat(MAX_FILE_SIZE as usize + 1));
+        write(
+            &root,
+            "big.rs",
+            &"x".repeat(usize::try_from(MAX_FILE_SIZE).unwrap() + 1),
+        );
 
         let result = collect(&root, &ignores(&[]));
         assert_eq!(result.files, vec!["a.rs"]);

@@ -29,10 +29,7 @@ impl Ignores {
     /// matches it. Later sources win, so an explicit project rule overrides
     /// the global one and the gitignore.
     pub fn load(root: &Path, global_ignore: &Path) -> Self {
-        let core = CORE_PATTERNS
-            .iter()
-            .map(|pattern| pattern.to_string())
-            .collect();
+        let core = CORE_PATTERNS.iter().map(ToString::to_string).collect();
 
         let mut patterns = Vec::new();
 

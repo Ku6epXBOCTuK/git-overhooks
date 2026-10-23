@@ -19,7 +19,7 @@ pub struct HookArgs {
 fn list_sorted_files(dir: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = match fs::read_dir(dir) {
         Ok(entries) => entries
-            .filter_map(|entry| entry.ok())
+            .filter_map(Result::ok)
             .map(|entry| entry.path())
             .filter(|path| path.is_file())
             .collect(),
@@ -132,7 +132,7 @@ fn run_script(sh: &Path, script: &Path, args: &[String]) -> Result<(), AppError>
     Ok(())
 }
 
-pub fn command_hook(args: HookArgs) -> Result<(), AppError> {
+pub fn command_hook(args: &HookArgs) -> Result<(), AppError> {
     info!("Hook: {}", args.hook);
 
     let scripts = collect_scripts(&args.hook)?;

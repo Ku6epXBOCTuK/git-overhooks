@@ -23,8 +23,7 @@ fn decoration_len(text: &str) -> Option<usize> {
     }
 
     match bytes.first() {
-        Some(b'*') => Some(1),
-        Some(b'[') => Some(1),
+        Some(b'*' | b'[') => Some(1),
         Some(b'-') => {
             if bytes.get(1).is_some_and(|byte| is_word_byte(*byte)) {
                 None
@@ -112,7 +111,7 @@ fn mark_truncated(line: &str, is_block: bool) -> String {
             }
             end
         }
-        _ => line.find(':').map(|index| index + 1).unwrap_or(0),
+        _ => line.find(':').map_or(0, |index| index + 1),
     };
 
     format!("{} [cut]{}", &line[..label_end], &line[label_end..])
@@ -156,35 +155,31 @@ pub fn apply(block: &CommentBlock, config: &CommentConfig) -> Outcome {
 
     let head_info = parse_head(&contents[head], is_block);
 
-    let keyword = match &head_info {
-        Some(info) => match config.canonical_keyword(&info.word) {
-            Some(canonical) => {
-                let line = contents[head].clone();
-                let zone = line[info.zone_start..info.zone_end].to_string();
+    let keyword = if let Some(info) = &head_info {
+        if let Some(canonical) = config.canonical_keyword(&info.word) {
+            let line = contents[head].clone();
+            let zone = line[info.zone_start..info.zone_end].to_string();
 
-                if zone != canonical {
-                    let mut rebuilt = String::with_capacity(line.len());
-                    rebuilt.push_str(&line[..info.zone_start]);
-                    rebuilt.push_str(&canonical);
-                    rebuilt.push_str(&line[info.zone_end..]);
-                    contents[head] = rebuilt;
-                    actions.push(Action::Normalized);
-                }
+            if zone != canonical {
+                let mut rebuilt = String::with_capacity(line.len());
+                rebuilt.push_str(&line[..info.zone_start]);
+                rebuilt.push_str(&canonical);
+                rebuilt.push_str(&line[info.zone_end..]);
+                contents[head] = rebuilt;
+                actions.push(Action::Normalized);
+            }
 
-                Some(Keyword {
-                    raw: zone,
-                    canonical,
-                })
-            }
-            None => {
-                actions.push(Action::NoKeyword);
-                None
-            }
-        },
-        None => {
+            Some(Keyword {
+                raw: zone,
+                canonical,
+            })
+        } else {
             actions.push(Action::NoKeyword);
             None
         }
+    } else {
+        actions.push(Action::NoKeyword);
+        None
     };
 
     if contents.iter().any(|line| !line.is_ascii()) {
@@ -235,11 +230,15 @@ mod tests {
         let mut cursor = 0;
 
         for block in blocks(source) {
-            out.extend(original[cursor..block.start].iter().map(|l| l.to_string()));
+            out.extend(
+                original[cursor..block.start]
+                    .iter()
+                    .map(ToString::to_string),
+            );
             out.extend(block.render());
             cursor = block.end + 1;
         }
-        out.extend(original[cursor..].iter().map(|l| l.to_string()));
+        out.extend(original[cursor..].iter().map(ToString::to_string));
 
         let mut text = out.join("\n");
         if source.ends_with('\n') {

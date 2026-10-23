@@ -40,7 +40,7 @@ where
 {
     let path = base.join(inner_dir);
     if !path.exists() {
-        create_dir_all(&path)?
+        create_dir_all(&path)?;
     }
 
     Ok(path)

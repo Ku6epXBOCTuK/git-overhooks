@@ -105,9 +105,9 @@ EXIT CODE
 
 pub fn run(cli: Cli) -> Result<(), AppError> {
     match cli.command {
-        Commands::Install(args) => command_install(args),
-        Commands::Uninstall(args) => command_uninstall(args),
-        Commands::Comments(args) => command_comments(args),
-        Commands::Hook(args) => command_hook(args),
+        Commands::Install(args) => command_install(&args),
+        Commands::Uninstall(args) => command_uninstall(&args),
+        Commands::Comments(args) => command_comments(&args),
+        Commands::Hook(args) => command_hook(&args),
     }
 }

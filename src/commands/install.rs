@@ -30,6 +30,9 @@ fn write_format_script(hook_dir: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+// NOTE: on unix the permission change can fail, on other platforms there is
+// nothing to do, so the Result is only meaningful on unix.
+#[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))]
 fn set_executable(path: &Path) -> Result<(), AppError> {
     #[cfg(unix)]
     {
@@ -116,7 +119,7 @@ fn get_git_global_hook_path() -> Result<Option<String>, AppError> {
     }
 }
 
-pub fn command_install(args: InstallArgs) -> Result<(), AppError> {
+pub fn command_install(args: &InstallArgs) -> Result<(), AppError> {
     info!("Installing ...");
 
     let app_dir = app_dir();

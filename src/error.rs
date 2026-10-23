@@ -39,11 +39,13 @@ pub(crate) enum AppExitCode {
 
 impl From<AppError> for AppExitCode {
     fn from(err: AppError) -> Self {
-        use AppError::*;
         match err {
-            Io(_) | Unknown(_) | HookFailed(_) | Config { .. } => AppExitCode::UnknownError,
-            GitError | ShNotFound => AppExitCode::GitError,
-            HomeNotFound | InternalError => AppExitCode::HomeNotFound,
+            AppError::Io(_)
+            | AppError::Unknown(_)
+            | AppError::HookFailed(_)
+            | AppError::Config { .. } => AppExitCode::UnknownError,
+            AppError::GitError | AppError::ShNotFound => AppExitCode::GitError,
+            AppError::HomeNotFound | AppError::InternalError => AppExitCode::HomeNotFound,
         }
     }
 }
@@ -65,8 +67,10 @@ pub struct Exit(pub Result<(), AppError>);
 impl Termination for Exit {
     fn report(self) -> ExitCode {
         match self.0 {
-            Ok(_) => ExitCode::SUCCESS,
-            Err(AppError::HookFailed(code)) => ExitCode::from(code.clamp(0, 255) as u8),
+            Ok(()) => ExitCode::SUCCESS,
+            Err(AppError::HookFailed(code)) => {
+                ExitCode::from(u8::try_from(code.clamp(0, 255)).unwrap_or(0))
+            }
             Err(err) => {
                 eprintln!("Error: {err}");
                 ExitCode::from(err)

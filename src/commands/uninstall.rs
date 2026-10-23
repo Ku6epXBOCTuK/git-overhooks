@@ -11,7 +11,7 @@ pub struct UninstallArgs {
     remove_files: bool,
 }
 
-pub fn command_uninstall(args: UninstallArgs) -> Result<(), AppError> {
+pub fn command_uninstall(args: &UninstallArgs) -> Result<(), AppError> {
     info!("Uninstalling ...");
 
     let output = Command::new("git")

@@ -14,6 +14,12 @@ pub struct CommentsArgs {
     #[arg(long, conflicts_with = "all")]
     staged: bool,
 
+    #[command(flatten)]
+    write: WriteOptions,
+}
+
+#[derive(Args, Debug)]
+pub struct WriteOptions {
     /// Rewrite files instead of only reporting: normalize keywords and cut long blocks
     #[arg(long)]
     write: bool,
@@ -80,18 +86,24 @@ fn repo_root() -> Result<PathBuf, AppError> {
     Ok(PathBuf::from(text))
 }
 
-pub fn command_comments(args: CommentsArgs) -> Result<(), AppError> {
+pub fn command_comments(args: &CommentsArgs) -> Result<(), AppError> {
     let root = repo_root()?;
 
     let report = if args.all {
-        comments::run_all(&root, args.write, args.staged, args.remove)?
+        comments::run_all(&root, args.write.write, args.staged, args.write.remove)?
     } else {
         let files = collect_files(&root, args.staged)?;
         debug!("files: {}", files.len());
-        comments::run(&root, &files, args.write, args.staged, args.remove)?
+        comments::run(
+            &root,
+            &files,
+            args.write.write,
+            args.staged,
+            args.write.remove,
+        )?
     };
 
-    comments::print_report(&report, args.write, args.remove);
+    comments::print_report(&report, args.write.write, args.write.remove);
 
     if report.failed() {
         return Err(AppError::HookFailed(1));

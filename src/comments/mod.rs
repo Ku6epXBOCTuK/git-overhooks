@@ -123,7 +123,7 @@ pub fn process_source(
 
 fn read_staged_content(root: &Path, file: &str) -> Result<Option<String>, AppError> {
     let output = Command::new("git")
-        .args(["show", &format!(":{}", file)])
+        .args(["show", &format!(":{file}")])
         .current_dir(root)
         .output()
         .map_err(|_| AppError::GitError)?;
@@ -151,8 +151,7 @@ pub fn load_config(root: &Path) -> Result<CommentConfig, AppError> {
 fn global_ignore_path() -> PathBuf {
     crate::common::APP_DIR
         .get()
-        .map(|dir| dir.join(config::IGNORE_FILE))
-        .unwrap_or_default()
+        .map_or_default(|dir| dir.join(config::IGNORE_FILE))
 }
 
 pub fn run(
@@ -231,9 +230,8 @@ fn run_with(
             std::fs::read_to_string(&path).ok()
         };
 
-        let source = match source {
-            Some(source) => source,
-            None => continue,
+        let Some(source) = source else {
+            continue;
         };
 
         let (output, mut found) = process_source(&source, file, &syntax, config, remove);
@@ -378,10 +376,7 @@ mod tests {
     fn string_content_is_not_treated_as_a_comment() {
         let source = "let a = r#\"\n    // text\n\"#;\n// drop me\n";
         let rust = Syntax {
-            strings: crate::comments::strings::StringStyle {
-                raw: true,
-                ..crate::comments::strings::StringStyle::default()
-            },
+            strings: crate::comments::strings::StringStyle::Raw,
             ..syntax()
         };
         let (output, findings) =

@@ -21,30 +21,12 @@ const HTML_CLOSE: &str = "-->";
 
 fn string_style(ext: &str) -> StringStyle {
     match ext {
-        "rs" => StringStyle {
-            raw: true,
-            ..Default::default()
-        },
-        "js" | "jsx" | "ts" | "tsx" | "mts" | "cts" | "mjs" | "cjs" | "go" => StringStyle {
-            backtick: true,
-            ..Default::default()
-        },
-        "py" | "toml" => StringStyle {
-            triple: true,
-            ..Default::default()
-        },
-        "sh" | "bash" | "zsh" | "php" | "rb" => StringStyle {
-            heredoc: true,
-            ..Default::default()
-        },
-        "yaml" | "yml" => StringStyle {
-            yaml_block: true,
-            ..Default::default()
-        },
-        "lua" => StringStyle {
-            lua_long: true,
-            ..Default::default()
-        },
+        "rs" => StringStyle::Raw,
+        "js" | "jsx" | "ts" | "tsx" | "mts" | "cts" | "mjs" | "cjs" | "go" => StringStyle::Backtick,
+        "py" | "toml" => StringStyle::Triple,
+        "sh" | "bash" | "zsh" | "php" | "rb" => StringStyle::Heredoc,
+        "yaml" | "yml" => StringStyle::YamlBlock,
+        "lua" => StringStyle::LuaLong,
         _ => StringStyle::default(),
     }
 }
@@ -53,13 +35,10 @@ pub fn syntax_for(path: &Path) -> Option<Syntax> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
 
     let (line, block, html, jsdoc): (&[&str], bool, bool, bool) = match ext.as_str() {
-        "rs" => (SLASH, true, false, false),
         "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs" => (SLASH, true, false, true),
-        "go" | "c" | "h" | "cc" | "cpp" | "hpp" | "java" | "kt" | "kts" | "cs" | "swift"
-        | "scala" | "php" | "m" | "mm" | "dart" | "zig" | "groovy" | "gradle" => {
-            (SLASH, true, false, false)
-        }
-        "css" | "scss" | "sass" | "less" => (SLASH, true, false, false),
+        "rs" | "css" | "scss" | "sass" | "less" | "go" | "c" | "h" | "cc" | "cpp" | "hpp"
+        | "java" | "kt" | "kts" | "cs" | "swift" | "scala" | "php" | "m" | "mm" | "dart"
+        | "zig" | "groovy" | "gradle" => (SLASH, true, false, false),
         "svelte" | "vue" | "astro" => (SLASH, true, true, true),
         "html" | "htm" | "xml" | "svg" => (SLASH, true, true, false),
         "py" | "rb" | "sh" | "bash" | "zsh" | "fish" | "ps1" | "toml" | "yaml" | "yml" | "pl"
@@ -230,7 +209,7 @@ const JSDOC_TAGS: &[&str] = &[
 const JSDOC_LINKS: &[&str] = &["{@link", "{@linkcode", "{@linkplain}"];
 
 /// NOTE: AI often wraps a plain note into a `/** */` block, so the marker alone
-/// is not proof of documentation. A real JSDoc comment always carries a tag, a
+/// is not proof of documentation. A real `JSDoc` comment always carries a tag, a
 /// type, an intra-doc link or markdown.
 fn is_jsdoc(contents: &[String]) -> bool {
     contents.iter().any(|line| {
@@ -426,26 +405,25 @@ pub fn parse(source: &str, syntax: &Syntax) -> Vec<CommentBlock> {
         let leading = find_marker(trimmed, syntax.line);
         let leading_offset = lines[index].len() - trimmed.len();
 
-        let (marker, marker_start, indent, pre) = match leading {
-            Some(marker) => (
+        let (marker, marker_start, indent, pre) = if let Some(marker) = leading {
+            (
                 marker,
                 leading_offset,
                 lines[index][..leading_offset].to_string(),
                 String::new(),
-            ),
-            None => {
-                let Some((marker, start)) = find_trailing_marker(trimmed, syntax.line) else {
-                    index += 1;
-                    continue;
-                };
-                let absolute = leading_offset + start;
-                (
-                    marker,
-                    absolute,
-                    lines[index][..absolute].to_string(),
-                    lines[index][absolute..absolute + marker.len()].to_string(),
-                )
-            }
+            )
+        } else {
+            let Some((marker, start)) = find_trailing_marker(trimmed, syntax.line) else {
+                index += 1;
+                continue;
+            };
+            let absolute = leading_offset + start;
+            (
+                marker,
+                absolute,
+                lines[index][..absolute].to_string(),
+                lines[index][absolute..absolute + marker.len()].to_string(),
+            )
         };
 
         let rest = &lines[index][marker_start + marker.len()..];

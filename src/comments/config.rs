@@ -129,7 +129,7 @@ impl CommentConfig {
     }
 
     /// NOTE: the project file overrides the global one per setting, so a
-    /// project can change max_lines and keep the global keyword table.
+    /// project can change `max_lines` and keep the global keyword table.
     pub fn load(global_path: Option<&Path>, project_path: Option<&Path>) -> Result<Self, AppError> {
         let mut config = Self::default();
 
