@@ -9,6 +9,7 @@ use tracing::{info, warn};
 
 const FORMAT_SCRIPT: &str = "00-format.sh";
 const COMMENTS_SCRIPT: &str = "01-comments.sh";
+const TESTS_ASCII_SCRIPT: &str = "02-tests-ascii.sh";
 
 #[derive(Args, Debug)]
 pub struct InstallArgs {
@@ -53,6 +54,20 @@ fn write_comments_script(hook_dir: &Path, bin_path: &Path) -> Result<(), AppErro
     let contents = include_str!("../comments.template").replace("{{bin-path}}", &bin_str);
 
     info!("Write comments script: {}", path.display());
+    fs::write(&path, contents)?;
+    set_executable(&path)?;
+    Ok(())
+}
+
+fn write_tests_ascii_script(hook_dir: &Path, bin_path: &Path) -> Result<(), AppError> {
+    let path = hook_dir.join(TESTS_ASCII_SCRIPT);
+    let bin_str = dunce::canonicalize(bin_path)?
+        .to_str()
+        .ok_or(AppError::InternalError)?
+        .replace('\\', "/");
+    let contents = include_str!("../tests_ascii.template").replace("{{bin-path}}", &bin_str);
+
+    info!("Write tests-ascii script: {}", path.display());
     fs::write(&path, contents)?;
     set_executable(&path)?;
     Ok(())
@@ -140,6 +155,7 @@ pub fn command_install(args: &InstallArgs) -> Result<(), AppError> {
     }
     write_format_script(&pre_commit_dir)?;
     write_comments_script(&pre_commit_dir, &self_path)?;
+    write_tests_ascii_script(&pre_commit_dir, &self_path)?;
     write_config(args.force)?;
 
     info!("Hooks created ok");
