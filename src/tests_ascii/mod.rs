@@ -1,5 +1,24 @@
+use std::path::Path;
+
 pub mod js;
 pub mod rs;
+
+const JS_EXTENSIONS: &[&str] = &["js", "jsx", "ts", "tsx", "mts", "cts", "mjs", "cjs"];
+
+/// NOTE: dispatch by file extension; files of other languages produce no
+/// findings until a scanner for them is added.
+pub fn check(source: &str, file: &str) -> Vec<Finding> {
+    let ext = Path::new(file)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase());
+
+    match ext.as_deref() {
+        Some(ext) if JS_EXTENSIONS.contains(&ext) => js::check(source, file),
+        Some("rs") => rs::check(source, file),
+        _ => Vec::new(),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {

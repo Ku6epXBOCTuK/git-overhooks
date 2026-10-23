@@ -30,7 +30,7 @@ pub fn check(source: &str, file: &str) -> Vec<Finding> {
             let found = if name == "panic" {
                 first_string(&tokens, open)
             } else {
-                last_string(&tokens, open)
+                message_string(&tokens, open, name)
             };
             if let Some((line, text)) = found {
                 push_finding(&mut findings, file, line, Kind::Assert, text);
@@ -88,14 +88,28 @@ fn skip_attribute(tokens: &[Tok], cursor: usize) -> Option<usize> {
     None
 }
 
-/// NOTE: the message of an assert is the last string literal among the direct
-/// arguments: assert!(cond, "msg {}", value). Strings of nested calls are
-/// left alone.
-fn last_string(tokens: &[Tok], open: usize) -> Option<(usize, String)> {
+/// NOTE: the message is an optional trailing argument and only a pure string
+/// there counts: assert! needs one condition before it, assert_eq!/assert_ne!
+/// a pair, so assert_eq!(actual, "value") is a value, not a message. Format
+/// arguments after the literal and strings of nested calls are left alone.
+fn message_string(tokens: &[Tok], open: usize, name: &str) -> Option<(usize, String)> {
     let (args, _) = paren_args(tokens, open)?;
-    args.iter()
-        .rev()
-        .find_map(|index| string_at(tokens, *index))
+
+    let min_commas = if name.ends_with("_eq") || name.ends_with("_ne") {
+        2
+    } else {
+        1
+    };
+    let commas = args
+        .iter()
+        .filter(|index| matches!(tokens[**index], Tok::Punct(',')))
+        .count();
+    if commas < min_commas {
+        return None;
+    }
+
+    let last = *args.last()?;
+    string_at(tokens, last)
 }
 
 /// NOTE: panic! and .expect( explain a failure with their first literal.
@@ -380,6 +394,17 @@ mod tests {
     #[test]
     fn assert_without_message_is_ignored() {
         assert!(check("assert!(a.is_empty());\nassert_eq!(a, b);\n", "a.rs").is_empty());
+    }
+
+    #[test]
+    fn assert_eq_expected_value_is_not_a_message() {
+        // NOTE: with two arguments the string is the expected value, the
+        // message needs a third one.
+        assert!(check("assert_eq!(name(), \"тест\");\n", "a.rs").is_empty());
+        let findings = check("assert_eq!(name(), \"тест\", \"имена разные\");\n", "a.rs");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].kind, Kind::Assert);
+        assert_eq!(findings[0].text, "имена разные");
     }
 
     #[test]

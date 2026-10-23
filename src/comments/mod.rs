@@ -3,7 +3,6 @@ pub mod parser;
 pub mod rules;
 pub mod strings;
 
-use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::{check, error::AppError, ignore::Ignores};
@@ -134,22 +133,10 @@ pub fn run(
 ) -> Result<Report, AppError> {
     let config = load_config(root)?;
     let ignores = check::goh_ignores(root);
-
-    let mut filter = crate::walk::NestedFilter::new();
-    let mut skipped: BTreeSet<String> = BTreeSet::new();
-    let mut kept: Vec<String> = Vec::new();
-
-    for file in files {
-        match filter.nested_repository(root, file) {
-            Some(dir) => {
-                skipped.insert(dir);
-            }
-            None => kept.push(file.clone()),
-        }
-    }
+    let (kept, skipped) = check::filter_nested(root, files);
 
     let mut report = run_with(root, &kept, &config, &ignores, write, staged, remove)?;
-    report.skipped_repositories = skipped.into_iter().collect();
+    report.skipped_repositories = skipped;
 
     Ok(report)
 }
@@ -466,7 +453,9 @@ mod tests {
         }
         std::fs::create_dir_all(&root).unwrap();
         std::fs::create_dir_all(&app_dir).unwrap();
-        crate::common::APP_DIR.set(app_dir).unwrap();
+        // NOTE: other tests may have set APP_DIR first, a failed set is fine:
+        // only the global ignore path is read from it.
+        let _ = crate::common::APP_DIR.set(app_dir);
 
         Command::new("git")
             .args(["init", "-q", &root.to_string_lossy()])

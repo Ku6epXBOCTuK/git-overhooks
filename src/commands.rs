@@ -2,6 +2,7 @@ use crate::{
     commands::comments::{CommentsArgs, command_comments},
     commands::hook::{HookArgs, command_hook},
     commands::install::{InstallArgs, command_install},
+    commands::tests_ascii::{TestsAsciiArgs, command_tests_ascii},
     commands::uninstall::{UninstallArgs, command_uninstall},
     error::AppError,
 };
@@ -11,6 +12,7 @@ use clap_verbosity_flag::Verbosity;
 mod comments;
 mod hook;
 mod install;
+mod tests_ascii;
 mod uninstall;
 
 #[derive(Parser, Debug)]
@@ -98,6 +100,47 @@ EXIT CODE
   1  problems found, the hook 01-comments.sh fails the commit"#
     )]
     Comments(CommentsArgs),
+    /// Check test names and assert messages are ascii-only
+    #[command(
+        long_about = "Check test names and assert messages are ascii-only.",
+        after_long_help = r#"WHY
+  Non-ascii titles and messages can break when tests run on another machine
+  with a different encoding. Everything reported must be ascii in the source.
+
+CHECKED FILES
+  default:   staged, modified and untracked files
+  --staged:  staged files only, the content is read from the git index
+  --all:     every file in the repository except ignored ones
+  A file is checked when its extension is one of:
+    js jsx ts tsx mts cts mjs cjs   (test frameworks: it, test, describe, specify)
+    rs                              (Rust: #[test] functions)
+  Other files are not checked. Binary and unreadable files are skipped.
+  Nested repositories and ignored paths are skipped like in 'goh comments'.
+
+TITLES
+  JS/TS: the first string argument of it(), test(), describe(), specify(),
+  including modifier chains like test.skip(), it.each(table)(title) and
+  it.each`table`(title).
+  Rust: the function name of a #[test] (other attributes between are fine).
+
+ASSERT MESSAGES
+  JS/TS: the last pure string argument of assert() and expect()
+  (assert(cond, "msg"), expect(value, "msg")).
+  Rust: the message literal of assert!, assert_eq!, assert_ne!, debug_assert*!
+  and the first literal of panic!() and .expect().
+
+PASSED
+  Escaped unicode (\\uXXXX, \\u{...}) is ascii in the source and passes.
+  Strings inside comments or nested calls are not messages and are ignored.
+
+WRITE MODE
+  There is none: nothing is rewritten, the problems are only reported.
+
+EXIT CODE
+  0  everything is ascii
+  1  non-ascii found, the hook 02-tests-ascii.sh fails the commit"#
+    )]
+    TestsAscii(TestsAsciiArgs),
     /// Internal: run hook scripts (called by git wrappers)
     #[command(hide = true)]
     Hook(HookArgs),
@@ -108,6 +151,7 @@ pub fn run(cli: Cli) -> Result<(), AppError> {
         Commands::Install(args) => command_install(&args),
         Commands::Uninstall(args) => command_uninstall(&args),
         Commands::Comments(args) => command_comments(&args),
+        Commands::TestsAscii(args) => command_tests_ascii(&args),
         Commands::Hook(args) => command_hook(&args),
     }
 }

@@ -17,8 +17,6 @@ mod common;
 mod error;
 mod git_util;
 mod ignore;
-// NOTE: dead_code until the tests-ascii command wires the module up.
-#[allow(dead_code)]
 mod tests_ascii;
 mod walk;
 

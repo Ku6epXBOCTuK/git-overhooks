@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::{
@@ -6,6 +7,7 @@ use crate::{
     error::AppError,
     git_util,
     ignore::Ignores,
+    walk,
 };
 
 /// NOTE: every check loads the same ignore sources (gitignore, global and
@@ -15,6 +17,25 @@ pub fn goh_ignores(root: &Path) -> Ignores {
         .get()
         .map_or_default(|dir| dir.join(common::IGNORE_FILE));
     Ignores::load(root, &global)
+}
+
+/// NOTE: git reports files of a nested repository as untracked ones, so they
+/// are filtered out by path, the same way the walk skips them.
+pub fn filter_nested(root: &Path, files: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut filter = walk::NestedFilter::new();
+    let mut skipped = BTreeSet::new();
+    let mut kept = Vec::new();
+
+    for file in files {
+        match filter.nested_repository(root, file) {
+            Some(dir) => {
+                skipped.insert(dir);
+            }
+            None => kept.push(file.clone()),
+        }
+    }
+
+    (kept, skipped.into_iter().collect())
 }
 
 /// NOTE: the per-file loop is shared by every check: skip ignored files, read
