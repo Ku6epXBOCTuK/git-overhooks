@@ -14,9 +14,13 @@ pub struct CommentsArgs {
     #[arg(long, conflicts_with = "all")]
     staged: bool,
 
-    /// Rewrite files instead of only reporting
+    /// Rewrite files instead of only reporting: normalize keywords and cut long blocks
     #[arg(long)]
     write: bool,
+
+    /// Allow removing comments that have no keyword (applied together with --write)
+    #[arg(long)]
+    remove: bool,
 }
 
 fn git(root: &PathBuf, args: &[&str]) -> Result<Vec<String>, AppError> {
@@ -89,8 +93,8 @@ pub fn command_comments(args: CommentsArgs) -> Result<(), AppError> {
     let files = collect_files(&root, args.all, args.staged)?;
     debug!("files: {}", files.len());
 
-    let report = comments::run(&root, &files, args.write, args.staged)?;
-    comments::print_report(&report, args.write);
+    let report = comments::run(&root, &files, args.write, args.staged, args.remove)?;
+    comments::print_report(&report, args.write, args.remove);
 
     if report.failed() {
         return Err(AppError::HookFailed(1));

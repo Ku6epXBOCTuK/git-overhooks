@@ -55,6 +55,7 @@ pub fn process_source(
     file: &str,
     syntax: &Syntax,
     config: &CommentConfig,
+    remove: bool,
 ) -> (Option<String>, Vec<Finding>) {
     let blocks = parser::parse(source, syntax);
     if blocks.is_empty() {
@@ -70,13 +71,20 @@ pub fn process_source(
         let keyword = keyword_of(&outcome.block);
 
         if outcome.actions.contains(&Action::Removed) {
-            changed = true;
             findings.push(Finding {
                 file: file.to_string(),
                 line: block.start + 1,
                 action: Action::Removed,
                 keyword,
             });
+
+            // NOTE: deletion is destructive and carries meaning of its own, so
+            // it only happens when the caller explicitly allows it.
+            if !remove {
+                continue;
+            }
+
+            changed = true;
             if block.pre.is_empty() {
                 lines.drain(block.start..=block.end);
             } else {
@@ -153,7 +161,13 @@ pub fn load_config() -> CommentConfig {
     CommentConfig::load(&path).unwrap_or_default()
 }
 
-pub fn run(root: &Path, files: &[String], write: bool, staged: bool) -> Result<Report, AppError> {
+pub fn run(
+    root: &Path,
+    files: &[String],
+    write: bool,
+    staged: bool,
+    remove: bool,
+) -> Result<Report, AppError> {
     let config = load_config();
     let ignores = Ignores::load(root, &config.exclude);
 
@@ -181,7 +195,7 @@ pub fn run(root: &Path, files: &[String], write: bool, staged: bool) -> Result<R
             None => continue,
         };
 
-        let (output, mut found) = process_source(&source, file, &syntax, &config);
+        let (output, mut found) = process_source(&source, file, &syntax, &config, remove);
 
         if output.is_some() {
             changed_files += 1;
@@ -201,7 +215,7 @@ pub fn run(root: &Path, files: &[String], write: bool, staged: bool) -> Result<R
     })
 }
 
-pub fn print_report(report: &Report, write: bool) {
+pub fn print_report(report: &Report, write: bool, remove: bool) {
     if report.findings.is_empty() {
         println!("[goh] comments: ok");
         return;
@@ -210,10 +224,13 @@ pub fn print_report(report: &Report, write: bool) {
     for finding in &report.findings {
         let message = match &finding.action {
             Action::Removed => {
-                if write {
+                if write && remove {
                     "comment removed (no keyword)".to_string()
+                } else if remove {
+                    "comment without keyword: the block would be removed (run with 'goh comments --write --remove')".to_string()
                 } else {
-                    "comment would be removed (no keyword)".to_string()
+                    "comment without keyword: the block is kept (removal needs --remove)"
+                        .to_string()
                 }
             }
             Action::Normalized => format!("keyword normalized: {}", finding.keyword),
@@ -231,7 +248,7 @@ pub fn print_report(report: &Report, write: bool) {
 
     if !write {
         println!(
-            "[goh] {} issue(s) found, nothing changed (run with 'goh comments --write' to fix)",
+            "[goh] {} issue(s) found, nothing changed (run with 'goh comments --write' to apply)",
             report.findings.len()
         );
         return;
@@ -261,13 +278,17 @@ mod tests {
     }
 
     fn run(source: &str) -> (Option<String>, Vec<Finding>) {
-        process_source(source, "a.rs", &syntax(), &CommentConfig::default())
+        process_source(source, "a.rs", &syntax(), &CommentConfig::default(), false)
+    }
+
+    fn run_with_remove(source: &str) -> (Option<String>, Vec<Finding>) {
+        process_source(source, "a.rs", &syntax(), &CommentConfig::default(), true)
     }
 
     #[test]
     fn removes_and_keeps_surrounding_code() {
         let source = "let a = 1;\n// drop me\nlet z = 0;\n// NOTE: keep\nlet b = 2;\n";
-        let (output, findings) = run(source);
+        let (output, findings) = run_with_remove(source);
         assert_eq!(
             output.as_deref(),
             Some("let a = 1;\nlet z = 0;\n// NOTE: keep\nlet b = 2;\n")
@@ -277,9 +298,18 @@ mod tests {
     }
 
     #[test]
+    fn comment_without_keyword_is_kept_without_remove() {
+        let source = "let a = 1;\n// drop me\nlet z = 0;\n";
+        let (output, findings) = run(source);
+        assert_eq!(output, None);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].action, Action::Removed);
+    }
+
+    #[test]
     fn multiple_blocks_keep_line_numbers() {
         let source = "// drop\nlet a = 1;\n// drop\nlet b = 2;\n// NOTE: keep2\n";
-        let (output, findings) = run(source);
+        let (output, findings) = run_with_remove(source);
         assert_eq!(
             output.as_deref(),
             Some("let a = 1;\nlet b = 2;\n// NOTE: keep2\n")
@@ -300,7 +330,7 @@ mod tests {
     #[test]
     fn trailing_comment_removed_keeps_code() {
         let source = "let x = 1; // remove this\nlet y = 2;\n";
-        let (output, _) = run(source);
+        let (output, _) = run_with_remove(source);
         assert_eq!(output.as_deref(), Some("let x = 1;\nlet y = 2;\n"));
     }
 
@@ -346,7 +376,7 @@ mod tests {
     #[test]
     fn no_trailing_newline_preserved() {
         let source = "// drop\nlet x = 1;";
-        let (output, _) = run(source);
+        let (output, _) = run_with_remove(source);
         assert_eq!(output.as_deref(), Some("let x = 1;"));
     }
 
@@ -413,7 +443,7 @@ mod tests {
         // NOTE. The NOTE comment is not even listed, and the staged "just a
         // comment" would be reported as removed.
         let files = vec!["foo.rs".to_string()];
-        let report = comments::run(&root, &files, false, true).unwrap();
+        let report = comments::run(&root, &files, false, true, false).unwrap();
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].action, Action::Removed);
         assert_eq!(report.findings[0].keyword, "just");
