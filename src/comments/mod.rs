@@ -47,7 +47,7 @@ pub fn process_source(
     }
 
     let mut lines: Vec<String> = source.lines().map(str::to_string).collect();
-    let mut findings = Vec::new();
+    let mut groups: Vec<Vec<Finding>> = Vec::new();
     let mut changed = false;
 
     for block in blocks.iter().rev() {
@@ -55,21 +55,24 @@ pub fn process_source(
         let keyword = outcome.keyword.as_ref().map(|k| k.canonical.clone());
         let original = outcome.keyword.as_ref().map(|k| k.raw.clone());
 
-        if outcome.actions.contains(&Action::Removed) {
-            findings.push(Finding {
+        let mut block_findings: Vec<Finding> = outcome
+            .actions
+            .iter()
+            .map(|action| Finding {
                 file: file.to_string(),
                 line: block.start + 1,
-                action: Action::Removed,
-                keyword: None,
-                original: None,
-            });
+                action: action.clone(),
+                keyword: keyword.clone(),
+                original: original.clone(),
+            })
+            .collect();
 
-            // NOTE: deletion is destructive and carries meaning of its own, so
-            // it only happens when the caller explicitly allows it.
-            if !remove {
-                continue;
-            }
+        let removed = outcome.keyword.is_none() && remove;
 
+        if removed {
+            // NOTE: a block that disappears takes all its other problems with
+            // it, so only the removal is reported for it.
+            block_findings.retain(|finding| finding.action == Action::NoKeyword);
             changed = true;
             if block.pre.is_empty() {
                 lines.drain(block.start..=block.end);
@@ -77,41 +80,30 @@ pub fn process_source(
                 lines[block.start] = block.indent.trim_end().to_string();
                 lines.drain(block.start + 1..=block.end);
             }
+            groups.push(block_findings);
             continue;
         }
 
-        let mut dirty = false;
-        for action in &outcome.actions {
-            match action {
-                Action::Normalized | Action::Truncated { .. } => {
-                    dirty = true;
-                    findings.push(Finding {
-                        file: file.to_string(),
-                        line: block.start + 1,
-                        action: action.clone(),
-                        keyword: keyword.clone(),
-                        original: original.clone(),
-                    });
-                }
-                Action::NonAscii => findings.push(Finding {
-                    file: file.to_string(),
-                    line: block.start + 1,
-                    action: Action::NonAscii,
-                    keyword: keyword.clone(),
-                    original: original.clone(),
-                }),
-                _ => {}
-            }
-        }
+        let dirty = block_findings.iter().any(|finding| {
+            matches!(
+                finding.action,
+                Action::Normalized | Action::Truncated { .. }
+            )
+        });
 
         if dirty {
             changed = true;
             let span = block.end - block.start + 1;
             lines.splice(block.start..block.start + span, outcome.block.render());
         }
+
+        groups.push(block_findings);
     }
 
-    findings.reverse();
+    let mut findings: Vec<Finding> = Vec::new();
+    for group in groups.into_iter().rev() {
+        findings.extend(group);
+    }
 
     if !changed {
         return (None, findings);
@@ -226,7 +218,7 @@ fn expected_keywords(keywords: &[String]) -> String {
 
 fn describe(finding: &Finding, expected: &str, write: bool, remove: bool) -> String {
     match &finding.action {
-        Action::Removed => {
+        Action::NoKeyword => {
             let outcome = if write && remove {
                 "the whole block was removed"
             } else if remove {
@@ -328,7 +320,7 @@ mod tests {
         let (output, findings) = run(source);
         assert_eq!(output, None);
         assert_eq!(findings.len(), 1);
-        assert_eq!(findings[0].action, Action::Removed);
+        assert_eq!(findings[0].action, Action::NoKeyword);
     }
 
     #[test]
@@ -387,6 +379,30 @@ mod tests {
         let (output, findings) = run(source);
         assert_eq!(output, None);
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn one_block_reports_every_problem() {
+        let source = "// plain text\n// second\n// third\n// fourth\n";
+        let (output, findings) = run(source);
+        assert_eq!(
+            output.as_deref(),
+            Some("// plain [cut] text\n// second\n// third\n")
+        );
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].action, Action::NoKeyword);
+        assert_eq!(findings[1].action, Action::Truncated { lines: 4, max: 3 });
+        assert_eq!(findings[0].line, 1);
+        assert_eq!(findings[1].line, 1);
+    }
+
+    #[test]
+    fn removed_block_reports_only_the_removal() {
+        let source = "// plain text\n// second\n// third\n// fourth\n";
+        let (output, findings) = run_with_remove(source);
+        assert!(output.is_some());
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].action, Action::NoKeyword);
     }
 
     #[test]
@@ -471,7 +487,7 @@ mod tests {
         let files = vec!["foo.rs".to_string()];
         let report = comments::run(&root, &files, false, true, false).unwrap();
         assert_eq!(report.findings.len(), 1);
-        assert_eq!(report.findings[0].action, Action::Removed);
+        assert_eq!(report.findings[0].action, Action::NoKeyword);
         assert!(report.findings[0].keyword.is_none());
     }
 

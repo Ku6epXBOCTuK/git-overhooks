@@ -17,7 +17,7 @@ fn mark_truncated(head: &str) -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    Removed,
+    NoKeyword,
     Normalized,
     Truncated { lines: usize, max: usize },
     NonAscii,
@@ -76,33 +76,29 @@ pub fn apply(block: &CommentBlock, config: &CommentConfig) -> Outcome {
 
     let raw_word = strip_trailing_punctuation(first_word(&contents[head]).to_string());
 
-    let Some(canonical) = config.canonical_keyword(&raw_word) else {
-        actions.push(Action::Removed);
-        return Outcome {
-            block: CommentBlock {
-                contents,
-                ..block.clone()
-            },
-            actions,
-            keyword: None,
-        };
-    };
+    let keyword = match config.canonical_keyword(&raw_word) {
+        Some(canonical) => {
+            if canonical != raw_word {
+                let span = contents[head].find(&raw_word).unwrap_or(0);
+                let rest = &contents[head][span + raw_word.len()..];
+                let mut rebuilt = String::with_capacity(contents[head].len());
+                rebuilt.push_str(&contents[head][..span]);
+                rebuilt.push_str(&canonical);
+                rebuilt.push_str(rest);
+                contents[head] = rebuilt;
+                actions.push(Action::Normalized);
+            }
 
-    let keyword = Keyword {
-        raw: raw_word.clone(),
-        canonical: canonical.clone(),
+            Some(Keyword {
+                raw: raw_word,
+                canonical,
+            })
+        }
+        None => {
+            actions.push(Action::NoKeyword);
+            None
+        }
     };
-
-    if canonical != raw_word {
-        let span = contents[head].find(&raw_word).unwrap_or(0);
-        let rest = &contents[head][span + raw_word.len()..];
-        let mut rebuilt = String::with_capacity(contents[head].len());
-        rebuilt.push_str(&contents[head][..span]);
-        rebuilt.push_str(&canonical);
-        rebuilt.push_str(rest);
-        contents[head] = rebuilt;
-        actions.push(Action::Normalized);
-    }
 
     if contents.iter().any(|line| !line.is_ascii()) {
         actions.push(Action::NonAscii);
@@ -126,7 +122,7 @@ pub fn apply(block: &CommentBlock, config: &CommentConfig) -> Outcome {
             ..block.clone()
         },
         actions,
-        keyword: Some(keyword),
+        keyword,
     }
 }
 
@@ -168,7 +164,7 @@ mod tests {
     fn removes_comment_without_keyword() {
         let source = "// just a comment\nlet x = 1;\n";
         let outcome = apply(&blocks(source).remove(0), &CommentConfig::default());
-        assert!(outcome.actions.contains(&Action::Removed));
+        assert!(outcome.actions.contains(&Action::NoKeyword));
     }
 
     #[test]
@@ -251,6 +247,32 @@ mod tests {
         let outcome = apply(&block, &CommentConfig::default());
         assert!(outcome.actions.contains(&Action::NonAscii));
         assert_eq!(outcome.actions.len(), 1);
+    }
+
+    #[test]
+    fn reports_length_and_keyword_together() {
+        let source = "// plain text\n// second\n// third\n// fourth\n";
+        let block = blocks(source).remove(0);
+        let outcome = apply(&block, &CommentConfig::default());
+        assert!(outcome.actions.contains(&Action::NoKeyword));
+        assert!(
+            outcome
+                .actions
+                .contains(&Action::Truncated { lines: 4, max: 3 })
+        );
+    }
+
+    #[test]
+    fn reports_non_ascii_and_length_together() {
+        let source = "// NOTE: привет\n// second\n// third\n// fourth\n";
+        let block = blocks(source).remove(0);
+        let outcome = apply(&block, &CommentConfig::default());
+        assert!(outcome.actions.contains(&Action::NonAscii));
+        assert!(
+            outcome
+                .actions
+                .contains(&Action::Truncated { lines: 4, max: 3 })
+        );
     }
 
     #[test]
