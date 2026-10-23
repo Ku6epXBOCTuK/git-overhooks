@@ -474,10 +474,12 @@ mod tests {
             .unwrap();
         Command::new("git")
             .args(["config", "user.email", "test@example.com"])
+            .current_dir(&root)
             .status()
             .unwrap();
         Command::new("git")
             .args(["config", "user.name", "Test"])
+            .current_dir(&root)
             .status()
             .unwrap();
 
