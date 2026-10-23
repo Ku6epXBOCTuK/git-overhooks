@@ -4,6 +4,7 @@ pub mod parser;
 pub mod rules;
 
 use std::path::Path;
+use std::process::Command;
 
 use crate::error::AppError;
 
@@ -128,12 +129,31 @@ pub fn process_source(
     (Some(output), findings)
 }
 
+fn read_staged_content(root: &Path, file: &str) -> Result<Option<String>, AppError> {
+    let output = Command::new("git")
+        .args(["show", &format!(":{}", file)])
+        .current_dir(root)
+        .output()
+        .map_err(|_| AppError::GitError)?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    // NOTE: binary staged content is skipped just like an unreadable working-tree
+    // file, so it never produces replacement characters in the report.
+    match String::from_utf8(output.stdout) {
+        Ok(source) => Ok(Some(source)),
+        Err(_) => Ok(None),
+    }
+}
+
 pub fn load_config() -> CommentConfig {
     let path = crate::common::app_dir().join(config::CONFIG_FILE);
     CommentConfig::load(&path).unwrap_or_default()
 }
 
-pub fn run(root: &Path, files: &[String], write: bool) -> Result<Report, AppError> {
+pub fn run(root: &Path, files: &[String], write: bool, staged: bool) -> Result<Report, AppError> {
     let config = load_config();
     let ignores = Ignores::load(root, &config.exclude);
 
@@ -148,8 +168,17 @@ pub fn run(root: &Path, files: &[String], write: bool) -> Result<Report, AppErro
             continue;
         };
         let path = root.join(file);
-        let Ok(source) = std::fs::read_to_string(&path) else {
-            continue;
+        let source = if staged {
+            // NOTE: read staged content from the git index (not the working
+            // tree) so the check reviews exactly what will be committed.
+            read_staged_content(root, file)?
+        } else {
+            std::fs::read_to_string(&path).ok()
+        };
+
+        let source = match source {
+            Some(source) => source,
+            None => continue,
         };
 
         let (output, mut found) = process_source(&source, file, &syntax, &config);
@@ -220,6 +249,7 @@ pub fn print_report(report: &Report, write: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::comments;
 
     fn syntax() -> Syntax {
         Syntax {
@@ -318,5 +348,74 @@ mod tests {
         let source = "// drop\nlet x = 1;";
         let (output, _) = run(source);
         assert_eq!(output.as_deref(), Some("let x = 1;"));
+    }
+
+    // NOTE: staged-mode tests talk to the git index, so a temporary repo is
+    // created and cleaned up inside the test.
+
+    #[test]
+    fn reads_staged_content_not_worktree() {
+        use std::process::Command;
+
+        let app_dir = std::env::temp_dir().join(format!("goh-test-app-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("goh-staged-{}", std::process::id()));
+        if root.exists() {
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        if app_dir.exists() {
+            let _ = std::fs::remove_dir_all(&app_dir);
+        }
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&app_dir).unwrap();
+        crate::common::APP_DIR.set(app_dir).unwrap();
+
+        Command::new("git")
+            .args(["init", "-q", &root.to_string_lossy()])
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .status()
+            .unwrap();
+
+        let file = root.join("foo.rs");
+        // NOTE: Worktree: NOTE (will be overridden by the staged content).
+        std::fs::write(&file, "// NOTE: keep\nfn main() {}\n").unwrap();
+
+        // NOTE: Stage a comment without a keyword; then change the worktree without
+        // staging, so the worktree only has a NOTE.
+        std::fs::write(&file, "// just a comment\nfn main() {}\n").unwrap();
+        Command::new("git")
+            .args(["add", "foo.rs"])
+            .current_dir(&root)
+            .status()
+            .unwrap();
+        std::fs::write(&file, "// NOTE: keep\nfn main() {}\n").unwrap();
+
+        // NOTE: Worktree now has a NOTE (unstaged), index has a comment without a keyword (staged).
+        let staged = read_staged_content(&root, "foo.rs").expect("read staged content");
+        assert!(
+            staged
+                .as_deref()
+                .is_some_and(|s| s.contains("// just a comment"))
+        );
+        assert!(
+            !staged
+                .as_deref()
+                .is_some_and(|s| s.contains("// NOTE: keep"))
+        );
+
+        // NOTE: run() with staged=true must report the staged comment, not the worktree
+        // NOTE. The NOTE comment is not even listed, and the staged "just a
+        // comment" would be reported as removed.
+        let files = vec!["foo.rs".to_string()];
+        let report = comments::run(&root, &files, false, true).unwrap();
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].action, Action::Removed);
+        assert_eq!(report.findings[0].keyword, "just");
     }
 }

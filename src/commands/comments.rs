@@ -89,7 +89,7 @@ pub fn command_comments(args: CommentsArgs) -> Result<(), AppError> {
     let files = collect_files(&root, args.all, args.staged)?;
     debug!("files: {}", files.len());
 
-    let report = comments::run(&root, &files, args.write)?;
+    let report = comments::run(&root, &files, args.write, args.staged)?;
     comments::print_report(&report, args.write);
 
     if report.failed() {
