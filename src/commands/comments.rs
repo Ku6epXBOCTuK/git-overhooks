@@ -6,7 +6,7 @@ use tracing::debug;
 
 #[derive(Args, Debug)]
 pub struct CommentsArgs {
-    /// Check every tracked file instead of changed ones
+    /// Check every file in the repository except ignored ones
     #[arg(long)]
     all: bool,
 
@@ -42,15 +42,8 @@ fn git(root: &PathBuf, args: &[&str]) -> Result<Vec<String>, AppError> {
         .collect())
 }
 
-fn collect_files(root: &PathBuf, all: bool, staged: bool) -> Result<Vec<String>, AppError> {
+fn collect_files(root: &PathBuf, staged: bool) -> Result<Vec<String>, AppError> {
     let mut set = BTreeSet::new();
-
-    if all {
-        for file in git(root, &["ls-files"])? {
-            set.insert(file);
-        }
-        return Ok(set.into_iter().collect());
-    }
 
     for file in git(
         root,
@@ -90,10 +83,14 @@ fn repo_root() -> Result<PathBuf, AppError> {
 pub fn command_comments(args: CommentsArgs) -> Result<(), AppError> {
     let root = repo_root()?;
 
-    let files = collect_files(&root, args.all, args.staged)?;
-    debug!("files: {}", files.len());
+    let report = if args.all {
+        comments::run_all(&root, args.write, args.staged, args.remove)?
+    } else {
+        let files = collect_files(&root, args.staged)?;
+        debug!("files: {}", files.len());
+        comments::run(&root, &files, args.write, args.staged, args.remove)?
+    };
 
-    let report = comments::run(&root, &files, args.write, args.staged, args.remove)?;
     comments::print_report(&report, args.write, args.remove);
 
     if report.failed() {

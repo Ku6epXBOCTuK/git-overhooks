@@ -2,7 +2,9 @@ pub mod config;
 pub mod ignore;
 pub mod parser;
 pub mod rules;
+pub mod walk;
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -26,6 +28,7 @@ pub struct Report {
     pub findings: Vec<Finding>,
     pub changed_files: usize,
     pub keywords: Vec<String>,
+    pub skipped_repositories: Vec<String>,
 }
 
 impl Report {
@@ -161,6 +164,53 @@ pub fn run(
     let config = load_config(root)?;
     let ignores = Ignores::load(root, &global_ignore_path());
 
+    let mut filter = walk::NestedFilter::new();
+    let mut skipped: BTreeSet<String> = BTreeSet::new();
+    let mut kept: Vec<String> = Vec::new();
+
+    for file in files {
+        match filter.nested_repository(root, file) {
+            Some(dir) => {
+                skipped.insert(dir);
+            }
+            None => kept.push(file.clone()),
+        }
+    }
+
+    let mut report = run_with(root, &kept, &config, &ignores, write, staged, remove)?;
+    report.skipped_repositories = skipped.into_iter().collect();
+
+    Ok(report)
+}
+
+pub fn run_all(root: &Path, write: bool, staged: bool, remove: bool) -> Result<Report, AppError> {
+    let config = load_config(root)?;
+    let ignores = Ignores::load(root, &global_ignore_path());
+    let walked = walk::collect(root, &ignores);
+
+    let mut report = run_with(
+        root,
+        &walked.files,
+        &config,
+        &ignores,
+        write,
+        staged,
+        remove,
+    )?;
+    report.skipped_repositories = walked.skipped_repositories;
+
+    Ok(report)
+}
+
+fn run_with(
+    root: &Path,
+    files: &[String],
+    config: &CommentConfig,
+    ignores: &Ignores,
+    write: bool,
+    staged: bool,
+    remove: bool,
+) -> Result<Report, AppError> {
     let mut findings = Vec::new();
     let mut changed_files = 0;
 
@@ -185,7 +235,7 @@ pub fn run(
             None => continue,
         };
 
-        let (output, mut found) = process_source(&source, file, &syntax, &config, remove);
+        let (output, mut found) = process_source(&source, file, &syntax, config, remove);
 
         if output.is_some() {
             changed_files += 1;
@@ -207,6 +257,7 @@ pub fn run(
             .iter()
             .map(|keyword| keyword.canonical.clone())
             .collect(),
+        skipped_repositories: Vec::new(),
     })
 }
 
@@ -263,6 +314,7 @@ fn describe(finding: &Finding, expected: &str, write: bool, remove: bool) -> Str
 pub fn print_report(report: &Report, write: bool, remove: bool) {
     if report.findings.is_empty() {
         println!("[goh] comments: ok");
+        print_skipped(report);
         return;
     }
 
@@ -278,6 +330,7 @@ pub fn print_report(report: &Report, write: bool, remove: bool) {
             "[goh] {} issue(s) found, nothing changed (run with 'goh comments --write' to apply)",
             report.findings.len()
         );
+        print_skipped(report);
         return;
     }
 
@@ -288,6 +341,13 @@ pub fn print_report(report: &Report, write: bool, remove: bool) {
         );
     }
     println!("[goh] Commit aborted: nothing was staged, review with git diff.");
+    print_skipped(report);
+}
+
+fn print_skipped(report: &Report) {
+    for repository in &report.skipped_repositories {
+        println!("[goh] skipped nested repository: {repository}");
+    }
 }
 
 #[cfg(test)]

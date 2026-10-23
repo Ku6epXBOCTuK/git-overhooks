@@ -44,7 +44,8 @@ enum Commands {
     /// Enforce comment rules (keywords, length, english, marker format)
     #[command(
         long_about = "Enforce comment rules (keywords, length, ascii, marker format).\n\n\
-Checked files: staged, modified and untracked ones, or every tracked file with --all.\n\n\
+Checked files: staged, modified and untracked ones, or every file in the\n\
+repository with --all.\n\n\
 Ignored paths:\n  \
   core (always): .git, .svn, .hg, .bzr, .DS_Store, Thumbs.db, $RECYCLE.BIN\n  \
   global:        ~/.config/goh/.gohignore (default excludes for deps, build output, caches)\n  \

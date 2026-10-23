@@ -20,8 +20,8 @@ pub struct Pattern {
 
 #[derive(Debug, Clone)]
 pub struct Ignores {
-    core: Vec<String>,
-    patterns: Vec<Pattern>,
+    pub(crate) core: Vec<String>,
+    pub(crate) patterns: Vec<Pattern>,
 }
 
 impl Ignores {
