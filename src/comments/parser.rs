@@ -1,10 +1,13 @@
 use std::path::Path;
 
+use super::strings::StringStyle;
+
 pub struct Syntax {
     pub line: &'static [&'static str],
     pub block: bool,
     pub html: bool,
     pub jsdoc: bool,
+    pub strings: StringStyle,
 }
 
 const SLASH: &[&str] = &["//"];
@@ -15,6 +18,36 @@ const BLOCK_OPEN: &str = "/*";
 const BLOCK_CLOSE: &str = "*/";
 const HTML_OPEN: &str = "<!--";
 const HTML_CLOSE: &str = "-->";
+
+fn string_style(ext: &str) -> StringStyle {
+    match ext {
+        "rs" => StringStyle {
+            raw: true,
+            ..Default::default()
+        },
+        "js" | "jsx" | "ts" | "tsx" | "mts" | "cts" | "mjs" | "cjs" | "go" => StringStyle {
+            backtick: true,
+            ..Default::default()
+        },
+        "py" | "toml" => StringStyle {
+            triple: true,
+            ..Default::default()
+        },
+        "sh" | "bash" | "zsh" | "php" | "rb" => StringStyle {
+            heredoc: true,
+            ..Default::default()
+        },
+        "yaml" | "yml" => StringStyle {
+            yaml_block: true,
+            ..Default::default()
+        },
+        "lua" => StringStyle {
+            lua_long: true,
+            ..Default::default()
+        },
+        _ => StringStyle::default(),
+    }
+}
 
 pub fn syntax_for(path: &Path) -> Option<Syntax> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
@@ -41,6 +74,7 @@ pub fn syntax_for(path: &Path) -> Option<Syntax> {
         block,
         html,
         jsdoc,
+        strings: string_style(&ext),
     })
 }
 
@@ -327,11 +361,17 @@ fn parse_block_comment(
 
 pub fn parse(source: &str, syntax: &Syntax) -> Vec<CommentBlock> {
     let lines: Vec<&str> = source.lines().collect();
+    let skip = super::strings::skip_lines(source, syntax);
     let mut blocks = Vec::new();
     let mut index = 0;
 
     while index < lines.len() {
         let trimmed = lines[index].trim_start_matches('\u{feff}').trim_start();
+
+        if skip[index] {
+            index += 1;
+            continue;
+        }
 
         if index == 0 && trimmed.starts_with("#!") {
             index += 1;
@@ -417,6 +457,9 @@ pub fn parse(source: &str, syntax: &Syntax) -> Vec<CommentBlock> {
         let mut contents = vec![clean_content(rest)];
         let mut end = index;
         while pre.is_empty() && end + 1 < lines.len() {
+            if skip[end + 1] {
+                break;
+            }
             let next = lines[end + 1].trim_start();
             if find_marker(next, syntax.line).is_none() {
                 break;
@@ -466,6 +509,7 @@ mod tests {
             block: true,
             html: false,
             jsdoc: false,
+            strings: StringStyle::default(),
         }
     }
 
@@ -475,6 +519,7 @@ mod tests {
             block: false,
             html: false,
             jsdoc: false,
+            strings: StringStyle::default(),
         }
     }
 
@@ -484,6 +529,7 @@ mod tests {
             block: true,
             html: true,
             jsdoc: false,
+            strings: StringStyle::default(),
         }
     }
 
@@ -493,6 +539,7 @@ mod tests {
             block: true,
             html: false,
             jsdoc: true,
+            strings: StringStyle::default(),
         }
     }
 

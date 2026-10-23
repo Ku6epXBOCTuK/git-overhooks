@@ -224,6 +224,7 @@ mod tests {
             block: true,
             html: false,
             jsdoc: true,
+            strings: crate::comments::strings::StringStyle::default(),
         };
         parser::parse(source, &syntax)
     }

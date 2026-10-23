@@ -69,6 +69,7 @@ COMMENTS
   Consecutive comment lines are joined into one block.
   Skipped: shebang, directives (eslint-disable, prettier-ignore, nolint, go:generate, vim: ...),
   Rust doc comments /// and //!, JSDoc with tags, types, {@link} and markdown.
+  Text inside string literals is not a comment.
 
 RULES
   The keyword is the first word of the first non-empty line of the block.

@@ -2,6 +2,7 @@ pub mod config;
 pub mod ignore;
 pub mod parser;
 pub mod rules;
+pub mod strings;
 pub mod walk;
 
 use std::collections::BTreeSet;
@@ -361,6 +362,7 @@ mod tests {
             block: true,
             html: false,
             jsdoc: true,
+            strings: crate::comments::strings::StringStyle::default(),
         }
     }
 
@@ -370,6 +372,23 @@ mod tests {
 
     fn run_with_remove(source: &str) -> (Option<String>, Vec<Finding>) {
         process_source(source, "a.rs", &syntax(), &CommentConfig::default(), true)
+    }
+
+    #[test]
+    fn string_content_is_not_treated_as_a_comment() {
+        let source = "let a = r#\"\n    // text\n\"#;\n// drop me\n";
+        let rust = Syntax {
+            strings: crate::comments::strings::StringStyle {
+                raw: true,
+                ..crate::comments::strings::StringStyle::default()
+            },
+            ..syntax()
+        };
+        let (output, findings) =
+            process_source(source, "a.rs", &rust, &CommentConfig::default(), true);
+        assert_eq!(output.as_deref(), Some("let a = r#\"\n    // text\n\"#;\n"));
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].line, 4);
     }
 
     #[test]
