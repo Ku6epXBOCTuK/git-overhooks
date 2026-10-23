@@ -42,6 +42,21 @@ enum Commands {
     /// Uninstall hooks
     Uninstall(UninstallArgs),
     /// Enforce comment rules (keywords, length, english, marker format)
+    #[command(
+        long_about = "Enforce comment rules (keywords, length, ascii, marker format).\n\n\
+Checked files: staged, modified and untracked ones, or every tracked file with --all.\n\n\
+Ignored paths:\n  \
+  core (always): .git, .svn, .hg, .bzr, .DS_Store, Thumbs.db, $RECYCLE.BIN\n  \
+  global:        ~/.config/goh/.gohignore (default excludes for deps, build output, caches)\n  \
+  project:       .gohignore\n  \
+  repo:          .gitignore (read one-way, re-include rules are ignored)\n\n\
+A pattern starting with ! in .gohignore cancels an ignore, so !coverage checks\n\
+that folder. The project file wins over the global one.\n\n\
+Settings (the project file overrides the global one):\n  \
+  global:   ~/.config/goh/goh.toml\n  \
+  project:  goh.toml\n\n\
+An unknown key or a broken config stops the run with an error."
+    )]
     Comments(CommentsArgs),
     /// Internal: run hook scripts (called by git wrappers)
     #[command(hide = true)]

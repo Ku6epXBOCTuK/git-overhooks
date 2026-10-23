@@ -23,6 +23,9 @@ pub enum AppError {
 
     #[error("Hook failed with exit code {0}")]
     HookFailed(i32),
+
+    #[error("Invalid config file {path}: {message}")]
+    Config { path: String, message: String },
 }
 
 #[repr(u8)]
@@ -38,7 +41,7 @@ impl From<AppError> for AppExitCode {
     fn from(err: AppError) -> Self {
         use AppError::*;
         match err {
-            Io(_) | Unknown(_) | HookFailed(_) => AppExitCode::UnknownError,
+            Io(_) | Unknown(_) | HookFailed(_) | Config { .. } => AppExitCode::UnknownError,
             GitError | ShNotFound => AppExitCode::GitError,
             HomeNotFound | InternalError => AppExitCode::HomeNotFound,
         }

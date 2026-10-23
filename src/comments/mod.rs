@@ -3,7 +3,7 @@ pub mod ignore;
 pub mod parser;
 pub mod rules;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::error::AppError;
@@ -136,9 +136,19 @@ fn read_staged_content(root: &Path, file: &str) -> Result<Option<String>, AppErr
     }
 }
 
-pub fn load_config() -> CommentConfig {
-    let path = crate::common::app_dir().join(config::CONFIG_FILE);
-    CommentConfig::load(&path).unwrap_or_default()
+pub fn load_config(root: &Path) -> Result<CommentConfig, AppError> {
+    let global = crate::common::APP_DIR
+        .get()
+        .map(|dir| dir.join(config::CONFIG_FILE));
+    let project = root.join(config::CONFIG_FILE);
+    CommentConfig::load(global.as_deref(), Some(&project))
+}
+
+fn global_ignore_path() -> PathBuf {
+    crate::common::APP_DIR
+        .get()
+        .map(|dir| dir.join(config::IGNORE_FILE))
+        .unwrap_or_default()
 }
 
 pub fn run(
@@ -148,8 +158,8 @@ pub fn run(
     staged: bool,
     remove: bool,
 ) -> Result<Report, AppError> {
-    let config = load_config();
-    let ignores = Ignores::load(root, &config.exclude);
+    let config = load_config(root)?;
+    let ignores = Ignores::load(root, &global_ignore_path());
 
     let mut findings = Vec::new();
     let mut changed_files = 0;

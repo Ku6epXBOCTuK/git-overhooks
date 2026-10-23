@@ -46,7 +46,7 @@
 ## FEAT-003: uninstall восстанавливает предыдущий core.hooksPath
 
 Сейчас `goh uninstall` просто снимает `core.hooksPath`. Сохранять старое значение в
-`~/.config/goh/config.toml` при `install --force` (когда перезаписываем чужое) и возвращать
+`~/.config/goh/goh.toml` при `install --force` (когда перезаписываем чужое) и возвращать
 его при uninstall. Источник: adr-01 `--force`, adr-02.
 
 ## FEAT-004: `goh check` — диагностика дрейфа core.hooksPath

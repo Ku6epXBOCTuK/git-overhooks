@@ -55,15 +55,29 @@ fn write_comments_script(hook_dir: &Path, bin_path: &Path) -> Result<(), AppErro
     Ok(())
 }
 
-fn write_config(force: bool) -> Result<(), AppError> {
-    let path = app_dir().join("config.toml");
+fn write_file(path: &Path, contents: &str, label: &str, force: bool) -> Result<(), AppError> {
     if path.exists() && !force {
-        info!("Config already exists: {}", path.display());
+        info!("{label} already exists: {}", path.display());
         return Ok(());
     }
-    info!("Write config: {}", path.display());
-    fs::write(&path, crate::comments::config::DEFAULT_CONFIG)?;
+    info!("Write {label}: {}", path.display());
+    fs::write(path, contents)?;
     Ok(())
+}
+
+fn write_config(force: bool) -> Result<(), AppError> {
+    write_file(
+        &app_dir().join(crate::comments::config::CONFIG_FILE),
+        crate::comments::config::DEFAULT_CONFIG,
+        "config",
+        force,
+    )?;
+    write_file(
+        &app_dir().join(crate::comments::config::IGNORE_FILE),
+        crate::comments::config::DEFAULT_IGNORE,
+        "ignore file",
+        force,
+    )
 }
 
 fn write_git_hook(bin_dir: &Path, hook_name: &str, bin_path: &Path) -> Result<(), AppError> {

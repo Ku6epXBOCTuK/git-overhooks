@@ -1,12 +1,15 @@
+use std::collections::BTreeMap;
 use std::path::Path;
+
+use serde::Deserialize;
 
 use crate::error::AppError;
 
-pub const CONFIG_FILE: &str = "config.toml";
+pub const CONFIG_FILE: &str = "goh.toml";
+pub const IGNORE_FILE: &str = ".gohignore";
 
 pub const DEFAULT_CONFIG: &str = r#"[comments]
 max_lines = 3
-exclude = ["node_modules", "target", "dist"]
 
 # NOTE: key is the canonical spelling, values are punctuation variants.
 # Case is normalized automatically, so list only the dashes you accept.
@@ -14,6 +17,46 @@ exclude = ["node_modules", "target", "dist"]
 NOTE = []
 TODO = ["to-do"]
 FIXME = ["fix-me"]
+"#;
+
+pub const DEFAULT_IGNORE: &str = r#"# Global ignore patterns for goh.
+# One pattern per line, same syntax as .gitignore.
+# A line starting with "!" cancels an ignore: "!coverage" checks that folder.
+#
+# These are the default exclusions for dependencies, build output and caches.
+# Delete a line to check that folder, add a line to exclude another one.
+#
+# NOTE: version control databases (.git, .svn, .hg, .bzr) and OS leftovers
+# (.DS_Store, Thumbs.db, $RECYCLE.BIN) are ignored by goh itself and cannot be
+# re-enabled.
+
+# Dependencies
+node_modules
+.yarn
+.pnp
+bower_components
+.venv
+venv
+
+# Build output
+dist
+target
+.next
+.nuxt
+.docusaurus
+.turbo
+.serverless
+obj
+
+# Caches and reports
+.cache
+.eslintcache
+.tsbuildinfo
+.pytest_cache
+.rcache
+.nyc_output
+coverage
+.gradle
 "#;
 
 /// NOTE: lookup ignores case only; punctuation must be listed as an alias,
@@ -45,7 +88,6 @@ impl Keyword {
 pub struct CommentConfig {
     pub keywords: Vec<Keyword>,
     pub max_lines: usize,
-    pub exclude: Vec<String>,
 }
 
 impl Default for CommentConfig {
@@ -57,12 +99,21 @@ impl Default for CommentConfig {
                 Keyword::new("FIXME", vec!["fix-me".to_string()]),
             ],
             max_lines: 3,
-            exclude: ["node_modules", "target", "dist"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
         }
     }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileConfig {
+    comments: Option<CommentsFile>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommentsFile {
+    max_lines: Option<usize>,
+    keywords: Option<BTreeMap<String, Vec<String>>>,
 }
 
 impl CommentConfig {
@@ -77,125 +128,71 @@ impl CommentConfig {
             .map(|keyword| keyword.canonical.clone())
     }
 
-    pub fn load(path: &Path) -> Result<Self, AppError> {
-        let Ok(text) = std::fs::read_to_string(path) else {
-            return Ok(Self::default());
-        };
-
+    /// NOTE: the project file overrides the global one per setting, so a
+    /// project can change max_lines and keep the global keyword table.
+    pub fn load(global_path: Option<&Path>, project_path: Option<&Path>) -> Result<Self, AppError> {
         let mut config = Self::default();
-        let mut keywords: Vec<Keyword> = Vec::new();
-        let mut section = String::new();
-        let mut found = false;
 
-        for raw in text.lines() {
-            let line = strip_comment(raw).trim();
-            if line.is_empty() {
-                continue;
-            }
-            if let Some(name) = section_name(line) {
-                section = name.to_string();
-                continue;
-            }
-            if section != "comments" && section != "comments.keywords" {
-                continue;
-            }
-            let Some((key, value)) = line.split_once('=') else {
-                continue;
-            };
-            let key = key.trim();
-            found = true;
-
-            if section == "comments.keywords" {
-                keywords.push(Keyword::new(key, parse_array(value).unwrap_or_default()));
-                continue;
-            }
-
-            match key {
-                "max_lines" => {
-                    if let Some(number) = parse_int(value) {
-                        config.max_lines = number.clamp(1, 100) as usize;
-                    }
-                }
-                "exclude" => {
-                    if let Some(values) = parse_array(value) {
-                        config.exclude = values;
-                    }
-                }
-                _ => {}
-            }
+        if let Some(path) = global_path
+            && let Some(file) = read_file(path)?
+        {
+            config.apply(file);
         }
 
-        if !keywords.is_empty() {
-            config.keywords = keywords;
-        }
-
-        if !found {
-            return Ok(Self::default());
+        if let Some(path) = project_path
+            && let Some(file) = read_file(path)?
+        {
+            config.apply(file);
         }
 
         Ok(config)
     }
-}
 
-fn section_name(line: &str) -> Option<&str> {
-    let inner = line.strip_prefix('[')?.strip_suffix(']')?;
-    Some(inner.trim())
-}
+    fn apply(&mut self, file: FileConfig) {
+        let Some(comments) = file.comments else {
+            return;
+        };
 
-fn strip_comment(line: &str) -> &str {
-    let mut in_quotes = false;
-    for (index, ch) in line.char_indices() {
-        match ch {
-            '"' => in_quotes = !in_quotes,
-            '#' if !in_quotes => return &line[..index],
-            _ => {}
+        if let Some(max_lines) = comments.max_lines {
+            self.max_lines = max_lines.clamp(1, 100);
+        }
+
+        if let Some(keywords) = comments.keywords
+            && !keywords.is_empty()
+        {
+            self.keywords = keywords
+                .into_iter()
+                .map(|(name, aliases)| Keyword::new(&name, aliases))
+                .collect();
         }
     }
-    line
 }
 
-fn parse_array(raw: &str) -> Option<Vec<String>> {
-    let inner = raw.trim().strip_prefix('[')?.strip_suffix(']')?;
-    let mut result = Vec::new();
-    let mut current = String::new();
-    let mut in_quotes = false;
+fn read_file(path: &Path) -> Result<Option<FileConfig>, AppError> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Ok(None);
+    };
 
-    for ch in inner.chars() {
-        match ch {
-            '"' => in_quotes = !in_quotes,
-            ',' if !in_quotes => {
-                push_item(&mut result, &current);
-                current.clear();
-            }
-            _ => current.push(ch),
-        }
-    }
-    push_item(&mut result, &current);
+    // NOTE: an unknown key or a broken file is a mistake in the config, so the
+    // run stops instead of silently checking files with the defaults.
+    let file: FileConfig = toml::from_str(&text).map_err(|err| AppError::Config {
+        path: path.display().to_string(),
+        message: err.to_string(),
+    })?;
 
-    Some(result)
-}
-
-fn push_item(result: &mut Vec<String>, raw: &str) {
-    let value = raw.trim().trim_matches('"').trim().to_string();
-    if !value.is_empty() {
-        result.push(value);
-    }
-}
-
-fn parse_int(raw: &str) -> Option<i64> {
-    raw.trim().parse().ok()
+    Ok(Some(file))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn load_text(text: &str, name: &str) -> CommentConfig {
-        let dir = std::env::temp_dir().join(name);
+    fn write_file(dir: &str, name: &str, text: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(CONFIG_FILE);
+        let path = dir.join(name);
         std::fs::write(&path, text).unwrap();
-        CommentConfig::load(&path).unwrap()
+        path
     }
 
     #[test]
@@ -210,22 +207,25 @@ mod tests {
         assert_eq!(config.canonical_keyword("Fix-Me").as_deref(), Some("FIXME"));
         assert_eq!(config.canonical_keyword("BUGFIX"), None);
         assert_eq!(config.canonical_keyword("to_do"), None);
-        assert!(config.exclude.contains(&"node_modules".to_string()));
     }
 
     #[test]
     fn parse_config() {
-        let config = load_text(DEFAULT_CONFIG, "goh-config-test");
+        let path = write_file("goh-config-test", CONFIG_FILE, DEFAULT_CONFIG);
+        let config = CommentConfig::load(Some(&path), None).unwrap();
         assert_eq!(config.keywords.len(), 3);
         assert_eq!(config.max_lines, 3);
-        assert!(config.exclude.contains(&"target".to_string()));
         assert_eq!(config.canonical_keyword("to-do").as_deref(), Some("TODO"));
     }
 
     #[test]
     fn keyword_table_adds_new_word() {
-        let text = "[comments.keywords]\nBUGFIX = [\"bug-fix\"]\n";
-        let config = load_text(text, "goh-config-test-3");
+        let path = write_file(
+            "goh-config-test-3",
+            CONFIG_FILE,
+            "[comments.keywords]\nBUGFIX = [\"bug-fix\"]\n",
+        );
+        let config = CommentConfig::load(Some(&path), None).unwrap();
         assert_eq!(config.keywords.len(), 1);
         assert_eq!(
             config.canonical_keyword("bug-fix").as_deref(),
@@ -240,8 +240,12 @@ mod tests {
 
     #[test]
     fn lowercase_key_is_uppercased() {
-        let text = "[comments.keywords]\nwarning = [\"warn-me\"]\n";
-        let config = load_text(text, "goh-config-test-4");
+        let path = write_file(
+            "goh-config-test-4",
+            CONFIG_FILE,
+            "[comments.keywords]\nwarning = [\"warn-me\"]\n",
+        );
+        let config = CommentConfig::load(Some(&path), None).unwrap();
         assert_eq!(
             config.canonical_keyword("warn-me").as_deref(),
             Some("WARNING")
@@ -250,7 +254,77 @@ mod tests {
 
     #[test]
     fn missing_file_is_default() {
-        let config = CommentConfig::load(Path::new("no/such/config.toml")).unwrap();
+        let config = CommentConfig::load(Some(Path::new("no/such/goh.toml")), None).unwrap();
         assert_eq!(config.max_lines, 3);
+    }
+
+    #[test]
+    fn project_file_overrides_global() {
+        let global = write_file(
+            "goh-config-test-5",
+            CONFIG_FILE,
+            "[comments]\nmax_lines = 5\n[comments.keywords]\nNOTE = []\n",
+        );
+        let project = write_file(
+            "goh-config-test-6",
+            "goh.toml",
+            "[comments]\nmax_lines = 7\n",
+        );
+        let config = CommentConfig::load(Some(&global), Some(&project)).unwrap();
+        assert_eq!(config.max_lines, 7);
+        assert_eq!(config.keywords.len(), 1);
+    }
+
+    #[test]
+    fn project_keywords_replace_global_table() {
+        let global = write_file(
+            "goh-config-test-7",
+            CONFIG_FILE,
+            "[comments.keywords]\nNOTE = []\nTODO = []\n",
+        );
+        let project = write_file(
+            "goh-config-test-8",
+            "goh.toml",
+            "[comments.keywords]\nFIXME = []\n",
+        );
+        let config = CommentConfig::load(Some(&global), Some(&project)).unwrap();
+        assert_eq!(config.keywords.len(), 1);
+        assert_eq!(config.canonical_keyword("FIXME").as_deref(), Some("FIXME"));
+        assert_eq!(config.canonical_keyword("NOTE"), None);
+    }
+
+    #[test]
+    fn broken_config_is_an_error() {
+        let path = write_file("goh-config-test-9", CONFIG_FILE, "[comments\n");
+        let err = CommentConfig::load(Some(&path), None).unwrap_err();
+        assert!(err.to_string().contains("goh-config-test-9"), "{err}");
+    }
+
+    #[test]
+    fn unknown_top_level_key_is_an_error() {
+        let path = write_file("goh-config-test-12", CONFIG_FILE, "[other]\nvalue = 1\n");
+        let err = CommentConfig::load(Some(&path), None).unwrap_err();
+        assert!(err.to_string().contains("other"), "{err}");
+    }
+
+    #[test]
+    fn unknown_key_in_comments_is_an_error() {
+        let path = write_file(
+            "goh-config-test-11",
+            CONFIG_FILE,
+            "[comments]\nmax_lines = 2\nunknown = 1\n",
+        );
+        let err = CommentConfig::load(Some(&path), None).unwrap_err();
+        assert!(err.to_string().contains("unknown"), "{err}");
+    }
+
+    #[test]
+    fn wrong_value_type_is_an_error() {
+        let path = write_file(
+            "goh-config-test-13",
+            CONFIG_FILE,
+            "[comments]\nmax_lines = \"many\"\n",
+        );
+        assert!(CommentConfig::load(Some(&path), None).is_err());
     }
 }

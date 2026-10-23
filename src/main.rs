@@ -7,6 +7,7 @@ use crate::{
 };
 use clap::Parser;
 use tracing::info;
+use tracing::level_filters::LevelFilter;
 use tracing_subscriber::fmt::time::ChronoLocal;
 
 mod commands;
@@ -26,7 +27,15 @@ fn setup() -> Result<(), AppError> {
 fn main() -> Exit {
     let cli = Cli::parse();
 
-    let log_level = cli.verbosity;
+    let log_level = cli.verbosity.tracing_level_filter();
+
+    // NOTE: warnings are user-facing (unknown config keys, broken files), so
+    // they must be visible without any flag.
+    let log_level = if log_level == LevelFilter::ERROR {
+        LevelFilter::WARN
+    } else {
+        log_level
+    };
 
     // TODO: add env filter
     tracing_subscriber::fmt()
