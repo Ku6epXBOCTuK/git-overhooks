@@ -88,7 +88,8 @@ pub fn command_tests_ascii(args: &TestsAsciiArgs) -> Result<(), AppError> {
     let root = repo_root()?;
 
     let (findings, broken, skipped) = if args.all {
-        let walked = walk::collect(&root, &check::goh_ignores(&root));
+        let mut ignores = check::goh_ignores(&root);
+        let walked = walk::collect(&root, &mut ignores);
         scan(
             &root,
             &walked.files,

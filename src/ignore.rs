@@ -22,6 +22,10 @@ pub struct Pattern {
 pub struct Ignores {
     pub(crate) core: Vec<String>,
     pub(crate) patterns: Vec<Pattern>,
+    /// NOTE: nested .gitignore patterns are inserted here, after the root
+    /// .gitignore and before the global and project files, so a ! rule in
+    /// .gohignore still re-includes what a nested gitignore ignores.
+    pub(crate) nested_at: usize,
 }
 
 impl Ignores {
@@ -39,6 +43,8 @@ impl Ignores {
             patterns.extend(found);
         }
 
+        let nested_at = patterns.len();
+
         if let Some(found) = read_patterns(global_ignore, true) {
             patterns.extend(found);
         }
@@ -47,7 +53,49 @@ impl Ignores {
             patterns.extend(found);
         }
 
-        Self { core, patterns }
+        Self {
+            core,
+            patterns,
+            nested_at,
+        }
+    }
+
+    /// NOTE: called by the walk for every directory it descends into. The
+    /// patterns are rewritten against the repository root, so they only ever
+    /// match inside their own directory and need no cleanup when the walk
+    /// leaves it. A missing file is not an error: most directories have none.
+    pub fn add_nested_gitignore(&mut self, dir: &str, path: &Path) {
+        self.add_nested(dir, path, false);
+    }
+
+    /// NOTE: a nested .gohignore is a project rule like the root one, so its
+    /// ! rules work and it is appended after the root and global files: a
+    /// deeper file wins over a shallower one, both win over the root files.
+    pub fn add_nested_gohignore(&mut self, dir: &str, path: &Path) {
+        self.add_nested(dir, path, true);
+    }
+
+    fn add_nested(&mut self, dir: &str, path: &Path, allow_negation: bool) {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return;
+        };
+
+        let scoped: Vec<Pattern> = text
+            .lines()
+            .filter_map(|line| normalize(line, allow_negation))
+            .map(|pattern| Pattern {
+                text: scoped(dir, &pattern.text),
+                negated: pattern.negated,
+            })
+            .collect();
+
+        if allow_negation {
+            self.patterns.extend(scoped);
+        } else {
+            for (index, pattern) in scoped.into_iter().enumerate() {
+                self.patterns.insert(self.nested_at + index, pattern);
+            }
+        }
     }
 
     pub fn matches(&self, path: &str) -> bool {
@@ -109,6 +157,17 @@ fn normalize(raw: &str, allow_negation: bool) -> Option<Pattern> {
     })
 }
 
+/// NOTE: a pattern with a slash (leading or inner) is anchored to its
+/// .gitignore directory, one without matches by name at any depth below it.
+/// Trailing slashes and /** are already stripped by normalize.
+fn scoped(dir: &str, text: &str) -> String {
+    if text.contains('/') {
+        format!("{dir}/{}", text.trim_start_matches('/'))
+    } else {
+        format!("{dir}/**/{text}")
+    }
+}
+
 fn pattern_matches_path(pattern: &str, path: &str) -> bool {
     if pattern_matches(pattern, path) {
         return true;
@@ -136,7 +195,7 @@ fn pattern_matches(pattern: &str, path: &str) -> bool {
         }
     }
 
-    if path == pattern {
+    if glob_match(pattern, path) {
         return true;
     }
 
@@ -193,12 +252,14 @@ mod tests {
     use crate::comments::config::DEFAULT_IGNORE;
 
     fn ignores(patterns: &[&str]) -> Ignores {
+        let patterns: Vec<Pattern> = patterns
+            .iter()
+            .filter_map(|pattern| normalize(pattern, true))
+            .collect();
         Ignores {
             core: Vec::new(),
-            patterns: patterns
-                .iter()
-                .filter_map(|pattern| normalize(pattern, true))
-                .collect(),
+            nested_at: patterns.len(),
+            patterns,
         }
     }
 
@@ -314,6 +375,77 @@ mod tests {
 
         let ig = Ignores::load(&root, &base.join("ignore"));
         assert!(ig.matches("coverage/report.rs"));
+    }
+
+    #[test]
+    fn nested_gitignore_patterns_are_scoped_to_their_directory() {
+        let base = temp_dir("goh-ignore-test-7");
+        let root = base.join("repo");
+        write(&root.join("web"), ".gitignore", "/build\nlogs\n*.tmp\n");
+
+        let mut ig = Ignores::load(&root, &base.join("ignore"));
+        ig.add_nested_gitignore("web", &root.join("web/.gitignore"));
+
+        // NOTE: anchored /build: only web/build itself
+        assert!(ig.matches("web/build"));
+        assert!(ig.matches("web/build/index.html"));
+        assert!(!ig.matches("web/src/build/helper.rs"));
+        // NOTE: unanchored logs: any depth below web/, nothing outside it
+        assert!(ig.matches("web/logs/deep.log"));
+        assert!(ig.matches("web/a/b/logs/deep.log"));
+        assert!(!ig.matches("logs/top.log"));
+        // NOTE: unanchored glob
+        assert!(ig.matches("web/x/c.tmp"));
+        assert!(!ig.matches("c.tmp"));
+    }
+
+    #[test]
+    fn gohignore_reincludes_nested_gitignore_paths() {
+        let base = temp_dir("goh-ignore-test-8");
+        let root = base.join("repo");
+        write(&root.join("web"), ".gitignore", "build\n");
+        write(&root, ".gohignore", "!web/build\n");
+
+        let mut ig = Ignores::load(&root, &base.join("ignore"));
+        ig.add_nested_gitignore("web", &root.join("web/.gitignore"));
+
+        assert!(!ig.matches("web/build/app.js"));
+    }
+
+    #[test]
+    fn nested_gohignore_is_a_project_rule() {
+        let base = temp_dir("goh-ignore-test-9");
+        let root = base.join("repo");
+        write(&base, "ignore", "coverage\n");
+        write(&root, ".gohignore", "scratch\n");
+        write(&root.join("web"), ".gohignore", "!coverage\nwebstuff\n");
+
+        let mut ig = Ignores::load(&root, &base.join("ignore"));
+        ig.add_nested_gohignore("web", &root.join("web/.gohignore"));
+
+        // NOTE: ! re-includes what the global file ignores, inside web/ only
+        assert!(!ig.matches("web/coverage/report.rs"));
+        assert!(ig.matches("coverage/report.rs"));
+        // NOTE: its own ignore, scoped to the directory
+        assert!(ig.matches("web/x/webstuff/a.rs"));
+        assert!(!ig.matches("webstuff/a.rs"));
+        // NOTE: the root file still applies
+        assert!(ig.matches("scratch/a.rs"));
+    }
+
+    #[test]
+    fn deeper_nested_gohignore_wins() {
+        let base = temp_dir("goh-ignore-test-10");
+        let root = base.join("repo");
+        write(&root.join("web"), ".gohignore", "build\n");
+        write(&root.join("web").join("app"), ".gohignore", "!build\n");
+
+        let mut ig = Ignores::load(&root, &base.join("ignore"));
+        ig.add_nested_gohignore("web", &root.join("web/.gohignore"));
+        ig.add_nested_gohignore("web/app", &root.join("web/app/.gohignore"));
+
+        assert!(ig.matches("web/lib/build/x.js"));
+        assert!(!ig.matches("web/app/build/main.js"));
     }
 
     #[test]

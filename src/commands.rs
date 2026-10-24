@@ -63,10 +63,10 @@ enum Commands {
 IGNORED PATHS
   core (always): .git, .svn, .hg, .bzr, .DS_Store, Thumbs.db, $RECYCLE.BIN
   global:        ~/.config/goh/.gohignore
-  project:       .gohignore
-  repo:          .gitignore (read one-way, re-include rules are ignored)
+  project:       .gohignore, root and nested ones (a deeper file wins)
+  repo:          .gitignore, root and nested ones (read one-way, re-include rules are ignored)
   A pattern starting with ! in .gohignore cancels an ignore, so !coverage checks that folder.
-  The project file wins over the global one.
+  The project file wins over the global one, a nested .gohignore over the root one.
   Files in nested repositories (directories with their own .git) are never checked, and a line
   about each of them is printed in the report.
 

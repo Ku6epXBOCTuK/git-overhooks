@@ -145,8 +145,8 @@ pub fn run(
 
 pub fn run_all(root: &Path, write: bool, staged: bool, remove: bool) -> Result<Report, AppError> {
     let config = load_config(root)?;
-    let ignores = check::goh_ignores(root);
-    let walked = crate::walk::collect(root, &ignores);
+    let mut ignores = check::goh_ignores(root);
+    let walked = crate::walk::collect(root, &mut ignores);
 
     let mut report = run_with(
         root,

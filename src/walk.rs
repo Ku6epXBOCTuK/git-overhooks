@@ -12,7 +12,7 @@ pub struct WalkResult {
     pub skipped_repositories: Vec<String>,
 }
 
-pub fn collect(root: &Path, ignores: &Ignores) -> WalkResult {
+pub fn collect(root: &Path, ignores: &mut Ignores) -> WalkResult {
     let mut files = BTreeSet::new();
     let mut skipped = Vec::new();
     let mut dirs = vec![root.to_path_buf()];
@@ -55,6 +55,11 @@ pub fn collect(root: &Path, ignores: &Ignores) -> WalkResult {
                     skipped.push(rel);
                     continue;
                 }
+                // NOTE: the root .gitignore and .gohignore are already
+                // loaded, nested ones are picked up as the walk reaches
+                // their directories.
+                ignores.add_nested_gitignore(&rel, &path.join(".gitignore"));
+                ignores.add_nested_gohignore(&rel, &path.join(".gohignore"));
                 children.push(path);
                 continue;
             }
@@ -135,15 +140,17 @@ mod tests {
     use crate::ignore::{Ignores, Pattern};
 
     fn ignores(patterns: &[&str]) -> Ignores {
+        let patterns: Vec<Pattern> = patterns
+            .iter()
+            .map(|pattern| Pattern {
+                text: pattern.to_string(),
+                negated: false,
+            })
+            .collect();
         Ignores {
             core: Vec::new(),
-            patterns: patterns
-                .iter()
-                .map(|pattern| Pattern {
-                    text: pattern.to_string(),
-                    negated: false,
-                })
-                .collect(),
+            nested_at: patterns.len(),
+            patterns,
         }
     }
 
@@ -168,7 +175,7 @@ mod tests {
         write(&root, "a.rs", "// NOTE: a\n");
         write(&root, "src/b.rs", "// NOTE: b\n");
 
-        let result = collect(&root, &ignores(&[]));
+        let result = collect(&root, &mut ignores(&[]));
         assert_eq!(result.files, vec!["a.rs", "src/b.rs"]);
         assert_eq!(result.skipped_repositories, [] as [String; 0]);
     }
@@ -179,8 +186,58 @@ mod tests {
         write(&root, "a.rs", "// NOTE: a\n");
         write(&root, "node_modules/dep.js", "// NOTE: dep\n");
 
-        let result = collect(&root, &ignores(&["node_modules"]));
+        let result = collect(&root, &mut ignores(&["node_modules"]));
         assert_eq!(result.files, vec!["a.rs"]);
+    }
+
+    #[test]
+    fn applies_nested_gitignore() {
+        let root = temp_dir("goh-walk-test-6");
+        write(&root, "a.rs", "// NOTE: a\n");
+        write(&root, "web/src/app.js", "// NOTE: app\n");
+        write(&root, "web/.gitignore", "/build\nlogs\n");
+        write(&root, "web/build/index.html", "<html></html>\n");
+        write(&root, "web/logs/deep.log", "log\n");
+        write(&root, "web/x/logs/other.log", "log\n");
+        // NOTE: web/.gitignore cannot reach outside web/: a top-level logs
+        // directory stays checked.
+        write(&root, "logs/top.log", "log\n");
+
+        let result = collect(&root, &mut ignores(&[]));
+        // NOTE: the nested .gitignore file itself is collected like any other
+        // file, scanning filters it out by extension anyway.
+        assert_eq!(
+            result.files,
+            vec!["a.rs", "logs/top.log", "web/.gitignore", "web/src/app.js"]
+        );
+    }
+
+    #[test]
+    fn applies_nested_gohignore() {
+        let root = temp_dir("goh-walk-test-7");
+        write(&root, "a.rs", "// NOTE: a\n");
+        write(
+            &root,
+            "web/.gohignore",
+            "generated\ngen-*.js\n!gen-keep.js\n",
+        );
+        write(&root, "web/generated/auto.js", "// NOTE: auto\n");
+        write(&root, "web/gen-auto.js", "// NOTE: auto\n");
+        write(&root, "web/gen-keep.js", "// NOTE: keep\n");
+        write(&root, "web/src/app.js", "// NOTE: app\n");
+
+        let result = collect(&root, &mut ignores(&[]));
+        // NOTE: !gen-keep.js saves a file, not a directory: web/generated is
+        // pruned by its own pattern before the ! rule is ever consulted.
+        assert_eq!(
+            result.files,
+            vec![
+                "a.rs",
+                "web/.gohignore",
+                "web/gen-keep.js",
+                "web/src/app.js"
+            ]
+        );
     }
 
     #[test]
@@ -190,7 +247,7 @@ mod tests {
         write(&root, "vendor/lib/.git/HEAD", "ref\n");
         write(&root, "vendor/lib/c.rs", "// NOTE: c\n");
 
-        let result = collect(&root, &ignores(&[]));
+        let result = collect(&root, &mut ignores(&[]));
         assert_eq!(result.files, vec!["a.rs"]);
         assert_eq!(result.skipped_repositories, vec!["vendor/lib"]);
     }
@@ -220,7 +277,7 @@ mod tests {
             &"x".repeat(usize::try_from(MAX_FILE_SIZE).unwrap() + 1),
         );
 
-        let result = collect(&root, &ignores(&[]));
+        let result = collect(&root, &mut ignores(&[]));
         assert_eq!(result.files, vec!["a.rs"]);
     }
 
@@ -243,7 +300,7 @@ mod tests {
             return;
         }
 
-        let result = collect(&root, &ignores(&[]));
+        let result = collect(&root, &mut ignores(&[]));
         assert_eq!(result.files, vec!["a.rs"]);
     }
 }
