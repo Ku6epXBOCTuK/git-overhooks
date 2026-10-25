@@ -23,7 +23,9 @@ pub fn check(source: &str, file: &str) -> Vec<Finding> {
         };
 
         if TEST_FUNCTIONS.contains(&name) {
-            if let Some((line, text)) = title(&tokens, index) {
+            if !is_member_call(&tokens, index)
+                && let Some((line, text)) = title(&tokens, index)
+            {
                 push_finding(&mut findings, file, line, Kind::Title, text);
             }
         } else if (name == "assert" || name == "expect")
@@ -34,6 +36,17 @@ pub fn check(source: &str, file: &str) -> Vec<Finding> {
     }
 
     findings
+}
+
+/// NOTE: describe is also a schema method (z.string().describe("...")), so a
+/// dotted name is skipped unless the base is test (test.describe("...")).
+fn is_member_call(tokens: &[Tok], index: usize) -> bool {
+    if index == 0 || !matches!(tokens[index - 1], Tok::Punct('.')) {
+        return false;
+    }
+
+    let base = index.checked_sub(2).and_then(|at| ident_text(&tokens[at]));
+    base != Some("test")
 }
 
 /// NOTE: the title is the first direct string argument: it("x") or
@@ -232,6 +245,34 @@ mod tests {
             assert_eq!(findings.len(), 1, "{source}");
             assert_eq!(findings[0].kind, Kind::Title, "{source}");
         }
+    }
+
+    #[test]
+    fn member_describe_is_not_a_title() {
+        assert!(
+            check(
+                "const s = z.string().describe(\"тест\");\nz.object({ a: z.string() }).describe(\"тест\");\n",
+                "a.test.ts"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn member_test_call_is_not_a_title() {
+        assert!(check("fixture.it(\"тест\");\nobj.test(\"тест\");\n", "a.test.ts").is_empty());
+    }
+
+    #[test]
+    fn playwright_suite_title_is_reported() {
+        assert_eq!(
+            titles("test.describe(\"тест\", () => {});\n"),
+            vec![(1, "тест".to_string())]
+        );
+        assert_eq!(
+            titles("test.describe.only(\"тест\", () => {});\n"),
+            vec![(1, "тест".to_string())]
+        );
     }
 
     #[test]
