@@ -3,13 +3,14 @@ use std::{env::current_exe, fs, path::Path, process::Command};
 use crate::{
     common::{BIN_DIR, GIT_HOOKS, HOOKS_DIR, app_dir, use_dir},
     error::AppError,
+    hooks::Check,
 };
 use clap::Args;
 use tracing::{info, warn};
 
-const FORMAT_SCRIPT: &str = "00-format.sh";
-const COMMENTS_SCRIPT: &str = "01-comments.sh";
-const TESTS_ASCII_SCRIPT: &str = "02-tests-ascii.sh";
+const FORMAT_SCRIPT: &str = Check::Format.script_name();
+const COMMENTS_SCRIPT: &str = Check::Comments.script_name();
+const TESTS_ASCII_SCRIPT: &str = Check::TestsAscii.script_name();
 
 #[derive(Args, Debug)]
 pub struct InstallArgs {

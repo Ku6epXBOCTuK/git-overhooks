@@ -1,6 +1,7 @@
 use crate::{
     commands::comments::{CommentsArgs, command_comments},
     commands::hook::{HookArgs, command_hook},
+    commands::ignore::{IgnoreArgs, UnignoreArgs, command_ignore, command_unignore},
     commands::install::{InstallArgs, command_install},
     commands::tests_ascii::{TestsAsciiArgs, command_tests_ascii},
     commands::uninstall::{UninstallArgs, command_uninstall},
@@ -11,6 +12,7 @@ use clap_verbosity_flag::Verbosity;
 
 mod comments;
 mod hook;
+mod ignore;
 mod install;
 mod tests_ascii;
 mod uninstall;
@@ -147,6 +149,47 @@ EXIT CODE
   1  non-ascii found, the hook 02-tests-ascii.sh fails the commit"#
     )]
     TestsAscii(TestsAsciiArgs),
+    /// Ignore checks for a repository, wholly or one by one
+    #[command(
+        long_about = "Ignore checks for a repository, wholly or one by one.",
+        after_long_help = r#"WHERE THE RULES LIVE
+  global:   ~/.config/goh/goh.toml
+  project:  goh.toml (with --project)
+  Nothing is written into the ignored repository unless --project is used.
+
+KEYS
+  host/owner/name from remote.origin.url: git@, ssh:// and https:// forms are
+  normalized, .git and the user are dropped. Without a remote the absolute
+  repository path is the key.
+  A key is a glob: github.com/acme/* covers every repository of that owner.
+
+CHECKS
+  format       the formatter, 00-format.sh
+  comments     comment rules, 01-comments.sh
+  tests-ascii  ascii test names and messages, 02-tests-ascii.sh
+  ascii        alias for tests-ascii
+  No checks means every check for that repository.
+  Manual runs (goh comments, goh tests-ascii) are never affected: the ignore
+  only stops the git hook.
+
+EXAMPLES
+  goh ignore                              every check in the current repository
+  goh ignore format                       only the formatter here
+  goh ignore --repo "github.com/acme/*"   a whole owner, from anywhere
+  goh unignore comments                   one check is back
+  goh ignore --list                       show the rules"#
+    )]
+    Ignore(IgnoreArgs),
+    /// Bring checks back for a repository
+    #[command(
+        long_about = "Bring checks back for a repository, wholly or one by one.",
+        after_long_help = r#"The inverse of goh ignore, with the same keys and checks.
+  goh unignore                    every check is back for the current repository
+  goh unignore format             only the formatter is back
+  goh unignore --repo "github.com/acme/*"
+  goh unignore --project          change the project goh.toml"#
+    )]
+    Unignore(UnignoreArgs),
     /// Internal: run hook scripts (called by git wrappers)
     #[command(hide = true)]
     Hook(HookArgs),
@@ -158,6 +201,8 @@ pub fn run(cli: Cli) -> Result<(), AppError> {
         Commands::Uninstall(args) => command_uninstall(&args),
         Commands::Comments(args) => command_comments(&args),
         Commands::TestsAscii(args) => command_tests_ascii(&args),
+        Commands::Ignore(args) => command_ignore(&args),
+        Commands::Unignore(args) => command_unignore(&args),
         Commands::Hook(args) => command_hook(&args),
     }
 }

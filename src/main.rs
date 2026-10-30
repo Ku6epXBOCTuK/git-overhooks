@@ -16,6 +16,7 @@ mod comments;
 mod common;
 mod error;
 mod git_util;
+mod hooks;
 mod ignore;
 mod tests_ascii;
 mod walk;

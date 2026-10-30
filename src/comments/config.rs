@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::error::AppError;
+use crate::{error::AppError, hooks::HooksFile};
 
 pub use crate::common::{CONFIG_FILE, IGNORE_FILE};
 
@@ -116,8 +116,9 @@ impl Default for CommentConfig {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct FileConfig {
+pub(crate) struct FileConfig {
     comments: Option<CommentsFile>,
+    pub(crate) hooks: Option<HooksFile>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -179,7 +180,7 @@ impl CommentConfig {
     }
 }
 
-fn read_file(path: &Path) -> Result<Option<FileConfig>, AppError> {
+pub(crate) fn read_file(path: &Path) -> Result<Option<FileConfig>, AppError> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Ok(None);
     };

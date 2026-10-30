@@ -4,7 +4,11 @@ use std::{
     process::Command,
 };
 
-use crate::{common::app_dir, error::AppError};
+use crate::{
+    common::app_dir,
+    error::AppError,
+    hooks::{self, Check, HooksConfig},
+};
 use clap::Args;
 use tracing::{debug, info};
 
@@ -46,15 +50,13 @@ fn git_path(args: &[&str]) -> Result<PathBuf, AppError> {
 }
 
 /// global → husky → .git-hooks → native .git/hooks
-fn collect_scripts(hook: &str) -> Result<Vec<PathBuf>, AppError> {
+fn collect_scripts(root: &Path, hook: &str) -> Result<Vec<PathBuf>, AppError> {
     let mut scripts = Vec::new();
 
     let global_dir = app_dir()
         .join(crate::common::HOOKS_DIR)
         .join(format!("{hook}.d"));
     scripts.extend(list_sorted_files(&global_dir));
-
-    let root = git_path(&["rev-parse", "--show-toplevel"])?;
 
     let husky_direct = root.join(".husky").join(hook);
     let husky_inner = root.join(".husky").join("_").join(hook);
@@ -135,9 +137,40 @@ fn run_script(sh: &Path, script: &Path, args: &[String]) -> Result<(), AppError>
 pub fn command_hook(args: &HookArgs) -> Result<(), AppError> {
     info!("Hook: {}", args.hook);
 
-    let scripts = collect_scripts(&args.hook)?;
+    let root = git_path(&["rev-parse", "--show-toplevel"])?;
+    let scripts = collect_scripts(&root, &args.hook)?;
     if scripts.is_empty() {
         debug!("No scripts for hook: {}", args.hook);
+        return Ok(());
+    }
+
+    let config = HooksConfig::load_repo(&root)?;
+    let key = hooks::repo_key(&root);
+
+    let scripts: Vec<PathBuf> = scripts
+        .into_iter()
+        .filter(|script| {
+            let check = script
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(Check::from_script);
+
+            match check {
+                Some(check) if config.is_disabled(&key, check) => {
+                    debug!(
+                        "Ignore {}: {} is disabled for {key}",
+                        script.display(),
+                        check.name()
+                    );
+                    false
+                }
+                _ => true,
+            }
+        })
+        .collect();
+
+    if scripts.is_empty() {
+        info!("Every check is ignored for {key}");
         return Ok(());
     }
     debug!("Scripts: {}", scripts.len());

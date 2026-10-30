@@ -203,7 +203,7 @@ fn pattern_matches(pattern: &str, path: &str) -> bool {
     glob_match(&prefix, path) || path.starts_with(&prefix)
 }
 
-fn glob_match(pattern: &str, text: &str) -> bool {
+pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
     let pattern: Vec<char> = pattern.chars().collect();
     let text: Vec<char> = text.chars().collect();
     matches_from(&pattern, &text)
