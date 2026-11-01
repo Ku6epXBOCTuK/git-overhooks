@@ -9,6 +9,9 @@ pub enum AppError {
     #[error("Unknown error: {0}")]
     Unknown(String),
 
+    #[error("{0}")]
+    InvalidArgument(String),
+
     #[error("Home directory not found")]
     HomeNotFound,
 
@@ -42,6 +45,7 @@ impl From<AppError> for AppExitCode {
         match err {
             AppError::Io(_)
             | AppError::Unknown(_)
+            | AppError::InvalidArgument(_)
             | AppError::HookFailed(_)
             | AppError::Config { .. } => AppExitCode::UnknownError,
             AppError::GitError | AppError::ShNotFound => AppExitCode::GitError,

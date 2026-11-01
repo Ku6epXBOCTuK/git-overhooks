@@ -104,13 +104,14 @@ impl HooksConfig {
         Ok(())
     }
 
-    pub fn is_disabled(&self, repo: &str, check: Check) -> bool {
+    pub fn is_disabled(&self, repo: &str, path: &str, check: Check) -> bool {
         if hits(&self.disabled, check) {
             return true;
         }
 
         self.repos.iter().any(|(pattern, checks)| {
-            crate::ignore::glob_match(pattern, repo) && hits(checks, check)
+            (crate::ignore::glob_match(pattern, repo) || crate::ignore::glob_match(pattern, path))
+                && hits(checks, check)
         })
     }
 }
@@ -194,13 +195,24 @@ fn join_key(host: &str, path: &str) -> Option<String> {
     Some(format!("{}/{}", host.to_ascii_lowercase(), path))
 }
 
-fn path_key(path: &Path) -> String {
+pub(crate) fn path_key(path: &Path) -> String {
     dunce::canonicalize(path)
         .unwrap_or_else(|_| path.to_path_buf())
         .to_string_lossy()
         .replace('\\', "/")
         .trim_end_matches('/')
         .to_string()
+}
+
+/// NOTE: the key covers everything below the folder, not the folder itself:
+/// a repository rooted exactly there is ignored by its own key instead.
+pub fn folder_key(path: &Path) -> Result<String, AppError> {
+    let path = dunce::canonicalize(path)
+        .map_err(|_| AppError::InvalidArgument(format!("folder not found: {}", path.display())))?;
+    let path = path.to_string_lossy().replace('\\', "/");
+    let path = path.trim_end_matches('/');
+
+    Ok(format!("{path}/{}", WILDCARD))
 }
 
 #[cfg(test)]
@@ -275,9 +287,9 @@ mod tests {
         );
         let config = HooksConfig::load(Some(&path), None).unwrap();
 
-        assert!(config.is_disabled("github.com/acme/tool", Check::Format));
-        assert!(!config.is_disabled("github.com/acme/tool", Check::Comments));
-        assert!(!config.is_disabled("github.com/other/tool", Check::Format));
+        assert!(config.is_disabled("github.com/acme/tool", "C:/repos/tool", Check::Format));
+        assert!(!config.is_disabled("github.com/acme/tool", "C:/repos/tool", Check::Comments));
+        assert!(!config.is_disabled("github.com/other/tool", "C:/repos/tool", Check::Format));
     }
 
     #[test]
@@ -289,7 +301,7 @@ mod tests {
         let config = HooksConfig::load(Some(&path), None).unwrap();
 
         for check in [Check::Format, Check::Comments, Check::TestsAscii] {
-            assert!(config.is_disabled("github.com/acme/tool", check));
+            assert!(config.is_disabled("github.com/acme/tool", "C:/repos/tool", check));
         }
     }
 
@@ -299,7 +311,7 @@ mod tests {
         let project = write("goh-hooks-test-4", "[hooks]\ndisabled = []\n");
         let config = HooksConfig::load(Some(&global), Some(&project)).unwrap();
 
-        assert!(!config.is_disabled("github.com/acme/tool", Check::Format));
+        assert!(!config.is_disabled("github.com/acme/tool", "C:/repos/tool", Check::Format));
     }
 
     #[test]
@@ -314,8 +326,8 @@ mod tests {
         );
         let config = HooksConfig::load(Some(&global), Some(&project)).unwrap();
 
-        assert!(config.is_disabled("github.com/acme/tool", Check::Format));
-        assert!(config.is_disabled("github.com/other/tool", Check::Comments));
+        assert!(config.is_disabled("github.com/acme/tool", "C:/repos/tool", Check::Format));
+        assert!(config.is_disabled("github.com/other/tool", "C:/repos/tool", Check::Comments));
     }
 
     #[test]
@@ -330,5 +342,42 @@ mod tests {
         let key = normalize_key("C:\\repos\\tool\\");
         assert!(!key.contains('\\'), "{key}");
         assert!(key.ends_with("tool"), "{key}");
+    }
+
+    #[test]
+    fn folder_rule_matches_a_repo_with_a_remote() {
+        let path = write(
+            "goh-hooks-test-8",
+            "[hooks.repos]\n\"C:/work/*\" = [\"format\"]\n",
+        );
+        let config = HooksConfig::load(Some(&path), None).unwrap();
+
+        assert!(config.is_disabled("github.com/acme/tool", "C:/work/group/tool", Check::Format));
+        assert!(!config.is_disabled("github.com/acme/tool", "C:/workshop/tool", Check::Format));
+        assert!(!config.is_disabled(
+            "github.com/acme/tool",
+            "C:/work/group/tool",
+            Check::Comments
+        ));
+    }
+
+    #[test]
+    fn folder_key_is_a_recursive_prefix() {
+        let dir = std::env::temp_dir().join(format!("goh-folder-key-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let key = folder_key(&dir).unwrap();
+        assert!(key.ends_with("/*"), "{key}");
+        assert!(!key.contains('\\'), "{key}");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn folder_key_rejects_a_missing_folder() {
+        let dir = std::env::temp_dir().join(format!("goh-folder-missing-{}", std::process::id()));
+        let err = folder_key(&dir).unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
     }
 }

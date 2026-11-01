@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    common::app_dir,
+    common::{app_dir, warn_user},
     error::AppError,
     hooks::{self, Check, HooksConfig},
 };
@@ -146,6 +146,7 @@ pub fn command_hook(args: &HookArgs) -> Result<(), AppError> {
 
     let config = HooksConfig::load_repo(&root)?;
     let key = hooks::repo_key(&root);
+    let path = hooks::path_key(&root);
 
     let scripts: Vec<PathBuf> = scripts
         .into_iter()
@@ -156,12 +157,13 @@ pub fn command_hook(args: &HookArgs) -> Result<(), AppError> {
                 .and_then(Check::from_script);
 
             match check {
-                Some(check) if config.is_disabled(&key, check) => {
+                Some(check) if config.is_disabled(&key, &path, check) => {
                     debug!(
                         "Ignore {}: {} is disabled for {key}",
                         script.display(),
                         check.name()
                     );
+                    warn_user(format!("{}: ignored", check.name()));
                     false
                 }
                 _ => true,
@@ -170,7 +172,7 @@ pub fn command_hook(args: &HookArgs) -> Result<(), AppError> {
         .collect();
 
     if scripts.is_empty() {
-        info!("Every check is ignored for {key}");
+        debug!("Every check is ignored for {key}");
         return Ok(());
     }
     debug!("Scripts: {}", scripts.len());

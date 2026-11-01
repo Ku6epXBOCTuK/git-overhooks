@@ -16,8 +16,12 @@ pub struct IgnoreArgs {
     pub checks: Vec<String>,
 
     /// Repository key or glob, e.g. github.com/acme/* (default: the current repository)
-    #[arg(long, conflicts_with_all = ["project", "list"])]
+    #[arg(long, conflicts_with_all = ["project", "list", "folder"])]
     pub repo: Option<String>,
+
+    /// Ignore this folder and everything below it, repositories with a remote included
+    #[arg(long, conflicts_with_all = ["repo", "project", "list"])]
+    pub folder: bool,
 
     /// Write to the project goh.toml instead of the global one
     #[arg(long, conflicts_with = "list")]
@@ -34,8 +38,12 @@ pub struct UnignoreArgs {
     pub checks: Vec<String>,
 
     /// Repository key or glob, e.g. github.com/acme/* (default: the current repository)
-    #[arg(long, conflicts_with = "project")]
+    #[arg(long, conflicts_with_all = ["project", "folder"])]
     pub repo: Option<String>,
+
+    /// Bring back this folder and everything below it
+    #[arg(long, conflicts_with_all = ["repo", "project"])]
+    pub folder: bool,
 
     /// Change the project goh.toml instead of the global one
     #[arg(long)]
@@ -48,7 +56,7 @@ pub fn command_ignore(args: &IgnoreArgs) -> Result<(), AppError> {
     }
 
     let path = config_path(args.project)?;
-    let key = target(args.repo.as_deref())?;
+    let key = target(args.repo.as_deref(), args.folder)?;
     let checks = parse_checks(&args.checks)?;
 
     ignore_in(&path, &key, &checks)?;
@@ -65,7 +73,7 @@ pub fn command_ignore(args: &IgnoreArgs) -> Result<(), AppError> {
 
 pub fn command_unignore(args: &UnignoreArgs) -> Result<(), AppError> {
     let path = config_path(args.project)?;
-    let key = target(args.repo.as_deref())?;
+    let key = target(args.repo.as_deref(), args.folder)?;
     let checks = parse_checks(&args.checks)?;
 
     let left = unignore_in(&path, &key, &checks)?;
@@ -94,7 +102,11 @@ fn config_path(project: bool) -> Result<PathBuf, AppError> {
     }
 }
 
-fn target(repo: Option<&str>) -> Result<String, AppError> {
+fn target(repo: Option<&str>, folder: bool) -> Result<String, AppError> {
+    if folder {
+        return hooks::folder_key(&std::env::current_dir()?);
+    }
+
     if let Some(repo) = repo {
         let repo = repo.trim();
         if repo.is_empty() {
@@ -103,7 +115,14 @@ fn target(repo: Option<&str>) -> Result<String, AppError> {
         return Ok(hooks::normalize_key(repo));
     }
 
-    Ok(hooks::repo_key(&repo_root()?))
+    let root = repo_root().map_err(|_| {
+        AppError::InvalidArgument(
+            "not a git repository: use --folder to ignore this folder and everything below"
+                .to_string(),
+        )
+    })?;
+
+    Ok(hooks::repo_key(&root))
 }
 
 fn parse_checks(names: &[String]) -> Result<Vec<Check>, AppError> {
@@ -333,12 +352,18 @@ fn list() -> Result<(), AppError> {
     let global = app_dir().join(CONFIG_FILE);
     block(&global, &read_doc(&global)?);
 
-    if let Ok(root) = repo_root() {
-        let project = root.join(CONFIG_FILE);
-        if project.is_file() {
-            block(&project, &read_doc(&project)?);
+    match repo_root() {
+        Ok(root) => {
+            let project = root.join(CONFIG_FILE);
+            if project.is_file() {
+                block(&project, &read_doc(&project)?);
+            }
+            println!("[goh] current repo: {}", hooks::repo_key(&root));
         }
-        println!("[goh] current repo: {}", hooks::repo_key(&root));
+        Err(_) => {
+            let cwd = std::env::current_dir()?;
+            println!("[goh] current folder: {}", hooks::path_key(&cwd));
+        }
     }
 
     Ok(())
@@ -440,5 +465,31 @@ mod tests {
         let path = temp("goh-ignore-write-7");
         fs::write(&path, "[hooks\n").unwrap();
         assert!(ignore_in(&path, "github.com/acme/tool", &[]).is_err());
+    }
+
+    #[test]
+    fn folder_rule_is_written_and_removed() {
+        let path = temp("goh-ignore-write-8");
+        let folder = std::env::temp_dir().join(format!("goh-ignore-folder-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).unwrap();
+        let key = hooks::folder_key(&folder).unwrap();
+
+        ignore_in(&path, &key, &[Check::Format]).unwrap();
+        let doc = read_doc(&path).unwrap();
+        let repos = doc["hooks"]["repos"].as_table().unwrap();
+        assert_eq!(values(repos.get(&key).unwrap()), vec!["format"]);
+
+        unignore_in(&path, &key, &[Check::Format]).unwrap();
+        assert!(read_doc(&path).unwrap().get("hooks").is_none());
+
+        let _ = fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn folder_target_is_the_current_folder_prefix() {
+        let key = target(None, true).unwrap();
+        assert!(key.ends_with("/*"), "{key}");
+        assert!(!key.contains('\\'), "{key}");
     }
 }

@@ -163,18 +163,26 @@ KEYS
   repository path is the key.
   A key is a glob: github.com/acme/* covers every repository of that owner.
 
+FOLDERS
+  --folder takes the current folder: the rule is its absolute path plus /* and
+  covers every repository below, clones with a remote included. It does not
+  cover a repository rooted in that folder itself; run goh ignore there.
+  Outside a repository --folder is required, otherwise goh only prints a hint.
+
 CHECKS
   format       the formatter, 00-format.sh
   comments     comment rules, 01-comments.sh
   tests-ascii  ascii test names and messages, 02-tests-ascii.sh
   ascii        alias for tests-ascii
   No checks means every check for that repository.
+  A skipped check prints a yellow [goh] <check>: ignored line in the hook.
   Manual runs (goh comments, goh tests-ascii) are never affected: the ignore
   only stops the git hook.
 
 EXAMPLES
   goh ignore                              every check in the current repository
   goh ignore format                       only the formatter here
+  goh ignore --folder format              every project under this folder
   goh ignore --repo "github.com/acme/*"   a whole owner, from anywhere
   goh unignore comments                   one check is back
   goh ignore --list                       show the rules"#
@@ -186,6 +194,7 @@ EXAMPLES
         after_long_help = r#"The inverse of goh ignore, with the same keys and checks.
   goh unignore                    every check is back for the current repository
   goh unignore format             only the formatter is back
+  goh unignore --folder format    every project under this folder again
   goh unignore --repo "github.com/acme/*"
   goh unignore --project          change the project goh.toml"#
     )]

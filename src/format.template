@@ -26,12 +26,22 @@ run_formatter() {
     # $1 - display name, rest - command
     name=$1
     shift
+    ran=1
     echo "[goh] running $name ..."
     "$@" || exit 1
     check_changes
 }
 
+warn() {
+    if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
+        printf '\033[33m[goh] %s\033[0m\n' "$1" >&2
+    else
+        printf '[goh] %s\n' "$1" >&2
+    fi
+}
+
 snapshot "$before_file"
+ran=0
 
 # Node.js
 if [ -f package.json ] && grep -Eq '"format"[[:space:]]*:' package.json; then
@@ -49,6 +59,10 @@ fi
 # Rust
 if [ -f Cargo.toml ]; then
     run_formatter "cargo fmt" cargo fmt
+fi
+
+if [ "$ran" -eq 0 ]; then
+    warn "format: ignored (no cargo fmt or package.json format script)"
 fi
 
 exit 0
