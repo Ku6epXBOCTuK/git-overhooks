@@ -55,14 +55,27 @@ goh просто запускает их по очереди.
 1. `///` и `//!` в Rust — это doc-комментарии по спецификации языка
 2. `/** */` в `.js`/`.ts`/`.svelte`/`.vue`/`.astro`, если внутри есть хоть один признак JSDoc:
    - тег (`@param`, `@returns`, `@throws`, `@type`, `@typedef`, `@property`, `@example`,
-     `@deprecated`, `@template`, `@see`, `@extends`, `@implements`, `@default`, `@enum`,
-     `@private`, `@public`)
+     `@deprecated`, `@description`, `@summary`, `@remarks`, `@template`, `@see`, `@extends`,
+     `@implements`, `@default`, `@enum`, `@private`, `@public`)
    - тип в фигурных скобках (`{string}`, `{Array<T>}`, `{?string}`)
    - ссылка (`{@link X}`, `{@linkcode}`, `{@linkplain}`)
    - markdown (```-блок, `[текст](url)`, http-ссылка)
+3. `/** */` без этих признаков — только в файлах из `[comments] doc_paths` и только если
+   блок стоит вплотную над объявлением (`interface`, `type`, `export const`, `function`,
+   `class`, `enum`) или над членом типа (`label?: string;`). Пустая строка между блоком и
+   объявлением снимает привязку: TypeScript такой блок не показывает.
 
-`/** */` без этих признаков считается обычным комментарием и подпадает под правила —
-достаточно одного сигнала, чтобы блок остался нетронутым.
+`doc_paths` по умолчанию пуст, поэтому вне перечисленных каталогов `/** */` без признаков
+JSDoc остаётся обычным комментарием и подпадает под правила. Пропущенная документация не
+проверяется на `max_lines` и не-ASCII.
+
+```toml
+[comments]
+doc_paths = ["src/components/**", "src/headless/**"]
+```
+
+Хвостовой `/**` и `/` у шаблона отбрасываются, поэтому запись означает «все файлы внутри
+каталога». Пути считаются от корня репозитория, где лежит `goh.toml`.
 
 Текст внутри строковых литералов комментарием не считается: raw-строки Rust,
 `"""..."""` в Python и TOML, backtick-шаблоны в JavaScript и Go, heredoc в shell,

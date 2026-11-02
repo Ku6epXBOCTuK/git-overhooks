@@ -10,6 +10,10 @@ pub use crate::common::{CONFIG_FILE, IGNORE_FILE};
 pub const DEFAULT_CONFIG: &str = r#"[comments]
 max_lines = 3
 
+# NOTE: plain /** */ blocks are accepted only in these paths and only when
+# attached to a declaration; empty means "only JSDoc with a signal".
+doc_paths = []
+
 # NOTE: key is the canonical spelling, values are punctuation variants.
 # Case is normalized automatically, so list only the dashes you accept.
 [comments.keywords]
@@ -99,6 +103,7 @@ impl Keyword {
 pub struct CommentConfig {
     pub keywords: Vec<Keyword>,
     pub max_lines: usize,
+    pub doc_paths: Vec<String>,
 }
 
 impl Default for CommentConfig {
@@ -110,6 +115,7 @@ impl Default for CommentConfig {
                 Keyword::new("FIXME", vec!["fix-me".to_string()]),
             ],
             max_lines: 3,
+            doc_paths: Vec::new(),
         }
     }
 }
@@ -126,9 +132,30 @@ pub(crate) struct FileConfig {
 struct CommentsFile {
     max_lines: Option<usize>,
     keywords: Option<BTreeMap<String, Vec<String>>>,
+    doc_paths: Option<Vec<String>>,
+}
+
+/// NOTE: doc paths follow the .gohignore shape: a trailing `/**` and a
+/// trailing slash are dropped, so a directory matches every file below it.
+fn doc_pattern(raw: &str) -> &str {
+    let pattern = raw.trim().trim_start_matches("./").trim_end_matches('/');
+    pattern
+        .strip_suffix("/**")
+        .unwrap_or(pattern)
+        .trim_end_matches('/')
 }
 
 impl CommentConfig {
+    pub fn allows_plain_doc(&self, file: &str) -> bool {
+        let file = file.replace('\\', "/");
+        let file = file.trim_start_matches("./");
+
+        self.doc_paths.iter().any(|raw| {
+            let pattern = doc_pattern(raw);
+            !pattern.is_empty() && crate::ignore::pattern_matches_path(pattern, file)
+        })
+    }
+
     pub fn canonical_keyword(&self, word: &str) -> Option<String> {
         let folded = fold(word);
         if folded.is_empty() {
@@ -176,6 +203,10 @@ impl CommentConfig {
                 .into_iter()
                 .map(|(name, aliases)| Keyword::new(&name, aliases))
                 .collect();
+        }
+
+        if let Some(doc_paths) = comments.doc_paths {
+            self.doc_paths = doc_paths;
         }
     }
 }
@@ -338,5 +369,37 @@ mod tests {
             "[comments]\nmax_lines = \"many\"\n",
         );
         assert!(CommentConfig::load(Some(&path), None).is_err());
+    }
+
+    #[test]
+    fn doc_paths_default_to_empty() {
+        assert!(!CommentConfig::default().allows_plain_doc("src/components/Button.svelte"));
+    }
+
+    #[test]
+    fn doc_paths_match_directory_prefixes() {
+        let path = write_file(
+            "goh-config-test-doc",
+            CONFIG_FILE,
+            "[comments]\ndoc_paths = [\"src/components/**\", \"lib/**\"]\n",
+        );
+        let config = CommentConfig::load(Some(&path), None).unwrap();
+
+        assert!(config.allows_plain_doc("src/components/Button.svelte"));
+        assert!(config.allows_plain_doc("src\\components\\Button.svelte"));
+        assert!(config.allows_plain_doc("./lib/a.ts"));
+        assert!(!config.allows_plain_doc("src/App.svelte"));
+        assert!(!config.allows_plain_doc("src/componentsx/a.ts"));
+    }
+
+    #[test]
+    fn empty_doc_pattern_matches_nothing() {
+        let path = write_file(
+            "goh-config-test-doc-empty",
+            CONFIG_FILE,
+            "[comments]\ndoc_paths = [\"/**\"]\n",
+        );
+        let config = CommentConfig::load(Some(&path), None).unwrap();
+        assert!(!config.allows_plain_doc("a.ts"));
     }
 }

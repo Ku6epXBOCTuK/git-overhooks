@@ -196,6 +196,9 @@ const JSDOC_TAGS: &[&str] = &[
     "@property",
     "@example",
     "@deprecated",
+    "@description",
+    "@summary",
+    "@remarks",
     "@template",
     "@see",
     "@extends",
@@ -338,7 +341,110 @@ fn parse_block_comment(
     }
 }
 
+const DECLARATION_WORDS: &[&str] = &[
+    "abstract",
+    "async",
+    "class",
+    "const",
+    "constructor",
+    "declare",
+    "enum",
+    "export",
+    "function",
+    "import",
+    "interface",
+    "let",
+    "module",
+    "namespace",
+    "type",
+    "var",
+];
+
+const MEMBER_MODIFIERS: &[&str] = &[
+    "abstract",
+    "async",
+    "declare",
+    "export",
+    "get",
+    "override",
+    "private",
+    "protected",
+    "public",
+    "readonly",
+    "set",
+    "static",
+];
+
+fn starts_with_word(line: &str, word: &str) -> bool {
+    let Some(rest) = line.strip_prefix(word) else {
+        return false;
+    };
+    rest.starts_with(|ch: char| ch.is_whitespace() || ch == '(')
+}
+
+fn strip_modifier(line: &str) -> Option<&str> {
+    MEMBER_MODIFIERS.iter().find_map(|modifier| {
+        line.strip_prefix(modifier)
+            .filter(|rest| rest.starts_with(char::is_whitespace))
+    })
+}
+
+/// NOTE: a member is `name?: Type`, the shape every prop description in a
+/// `ts` type literal has; without the colon it is a statement, not a member.
+fn is_member_signature(line: &str) -> bool {
+    let mut rest = line.trim_start();
+    while let Some(stripped) = strip_modifier(rest) {
+        rest = stripped.trim_start();
+    }
+
+    let bytes = rest.as_bytes();
+    let Some(first) = bytes.first() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || *first == b'_' || *first == b'$') {
+        return false;
+    }
+
+    let mut index = 1;
+    while index < bytes.len()
+        && (bytes[index].is_ascii_alphanumeric() || matches!(bytes[index], b'_' | b'$'))
+    {
+        index += 1;
+    }
+    while bytes.get(index) == Some(&b' ') {
+        index += 1;
+    }
+    if matches!(bytes.get(index), Some(b'?' | b'!')) {
+        index += 1;
+        while bytes.get(index) == Some(&b' ') {
+            index += 1;
+        }
+    }
+
+    bytes.get(index) == Some(&b':')
+}
+
+fn is_declaration_line(line: &str) -> bool {
+    let line = line.trim_start();
+    DECLARATION_WORDS
+        .iter()
+        .any(|word| starts_with_word(line, word))
+        || is_member_signature(line)
+}
+
+/// NOTE: the block must touch the declaration, no blank line: TypeScript
+/// attaches JSDoc only to the immediately following item, so a detached block
+/// documents nothing and stays a plain comment.
+fn is_attached_to_declaration(line: Option<&str>) -> bool {
+    line.is_some_and(is_declaration_line)
+}
+
+#[cfg(test)]
 pub fn parse(source: &str, syntax: &Syntax) -> Vec<CommentBlock> {
+    parse_with_doc(source, syntax, false)
+}
+
+pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<CommentBlock> {
     let lines: Vec<&str> = source.lines().collect();
     let skip = super::strings::skip_lines(source, syntax);
     let mut blocks = Vec::new();
@@ -372,7 +478,15 @@ pub fn parse(source: &str, syntax: &Syntax) -> Vec<CommentBlock> {
         if trimmed.starts_with(BLOCK_OPEN) && syntax.block {
             if trimmed.starts_with("/**") || trimmed.starts_with("/*!") {
                 match parse_block_comment(&lines, index, BLOCK_OPEN, BLOCK_CLOSE) {
-                    Some(block) if syntax.jsdoc && is_jsdoc(&block.contents) => {
+                    Some(block)
+                        if syntax.jsdoc
+                            && (is_jsdoc(&block.contents)
+                                || (plain_doc
+                                    && trimmed.starts_with("/**")
+                                    && is_attached_to_declaration(
+                                        lines.get(block.end + 1).copied(),
+                                    ))) =>
+                    {
                         index = skip_block(&lines, index);
                     }
                     Some(block) => {
@@ -696,5 +810,51 @@ mod tests {
     fn html_not_parsed_for_plain_script() {
         let source = "<!-- comment -->\nlet x = 1;\n";
         assert!(parse(source, &slash()).is_empty());
+    }
+
+    fn parse_with_plain_doc(source: &str) -> Vec<CommentBlock> {
+        parse_with_doc(source, &script(), true)
+    }
+
+    #[test]
+    fn plain_jsdoc_above_member_is_skipped_when_allowed() {
+        let source = "interface Props {\n  /** Text on the button. */\n  label?: string;\n}\n";
+        assert!(parse_with_plain_doc(source).is_empty());
+    }
+
+    #[test]
+    fn plain_jsdoc_above_export_is_skipped_when_allowed() {
+        let source = "/** Default size. */\nexport const size = 16;\n";
+        assert!(parse_with_plain_doc(source).is_empty());
+    }
+
+    #[test]
+    fn multiline_plain_jsdoc_above_declaration_is_skipped() {
+        let source = "/**\n * Text on the button.\n */\nfunction Button() {}\n";
+        assert!(parse_with_plain_doc(source).is_empty());
+    }
+
+    #[test]
+    fn detached_plain_jsdoc_is_collected() {
+        let source = "/** Text on the button. */\n\nlabel?: string;\n";
+        assert_eq!(parse_with_plain_doc(source).len(), 1);
+    }
+
+    #[test]
+    fn plain_jsdoc_above_statement_is_collected() {
+        let source = "function render() {\n  /** Wrapped note. */\n  return value;\n}\n";
+        assert_eq!(parse_with_plain_doc(source).len(), 1);
+    }
+
+    #[test]
+    fn plain_jsdoc_is_collected_outside_doc_paths() {
+        let source = "interface Props {\n  /** Text. */\n  label?: string;\n}\n";
+        assert_eq!(parse(source, &script()).len(), 1);
+    }
+
+    #[test]
+    fn description_tag_is_jsdoc() {
+        let source = "/** @description Text. */\nlet x = 1;\n";
+        assert!(parse(source, &script()).is_empty());
     }
 }

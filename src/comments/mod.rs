@@ -42,7 +42,7 @@ pub fn process_source(
     config: &CommentConfig,
     remove: bool,
 ) -> (Option<String>, Vec<Finding>) {
-    let blocks = parser::parse(source, syntax);
+    let blocks = parser::parse_with_doc(source, syntax, config.allows_plain_doc(file));
     if blocks.is_empty() {
         return (None, Vec::new());
     }
@@ -555,5 +555,56 @@ mod tests {
         );
         assert!(message.contains("'todo'"), "{message}");
         assert!(message.contains("'TODO'"), "{message}");
+    }
+
+    fn doc_config() -> CommentConfig {
+        CommentConfig {
+            doc_paths: vec!["src/components/**".to_string()],
+            ..CommentConfig::default()
+        }
+    }
+
+    const PROP_DOC: &str =
+        "interface Props {\n  /** Text on the button. */\n  label?: string;\n}\n";
+
+    #[test]
+    fn plain_jsdoc_in_doc_path_is_not_reported() {
+        let (output, findings) = process_source(
+            PROP_DOC,
+            "src/components/Button.svelte",
+            &syntax(),
+            &doc_config(),
+            false,
+        );
+        assert_eq!(output, None);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn plain_jsdoc_outside_doc_path_is_reported() {
+        let (_, findings) =
+            process_source(PROP_DOC, "src/App.svelte", &syntax(), &doc_config(), false);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].action, Action::NoKeyword);
+    }
+
+    #[test]
+    fn doc_comment_is_not_removed_by_remove() {
+        let (output, findings) = process_source(
+            PROP_DOC,
+            "src/components/Button.svelte",
+            &syntax(),
+            &doc_config(),
+            true,
+        );
+        assert_eq!(output, None);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn description_tag_is_documentation() {
+        let (output, findings) = run("/** @description Text. */\nlet x = 1;\n");
+        assert_eq!(output, None);
+        assert!(findings.is_empty());
     }
 }

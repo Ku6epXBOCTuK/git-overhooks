@@ -168,7 +168,7 @@ fn scoped(dir: &str, text: &str) -> String {
     }
 }
 
-fn pattern_matches_path(pattern: &str, path: &str) -> bool {
+pub(crate) fn pattern_matches_path(pattern: &str, path: &str) -> bool {
     if pattern_matches(pattern, path) {
         return true;
     }
