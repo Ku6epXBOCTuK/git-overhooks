@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use super::doc::{self, DocPolicy, Marker};
 use super::strings::StringStyle;
 
 pub struct Syntax {
@@ -186,71 +187,6 @@ fn find_trailing_marker<'a>(trimmed: &'a str, markers: &[&'a str]) -> Option<(&'
     best
 }
 
-const JSDOC_TAGS: &[&str] = &[
-    "@param",
-    "@returns",
-    "@return",
-    "@throws",
-    "@type",
-    "@typedef",
-    "@property",
-    "@example",
-    "@deprecated",
-    "@description",
-    "@summary",
-    "@remarks",
-    "@template",
-    "@see",
-    "@extends",
-    "@implements",
-    "@default",
-    "@enum",
-    "@private",
-    "@public",
-];
-
-const JSDOC_LINKS: &[&str] = &["{@link", "{@linkcode", "{@linkplain}"];
-
-/// NOTE: AI often wraps a plain note into a `/** */` block, so the marker alone
-/// is not proof of documentation. A real `JSDoc` comment always carries a tag, a
-/// type, an intra-doc link or markdown.
-fn is_jsdoc(contents: &[String]) -> bool {
-    contents.iter().any(|line| {
-        let line = strip_block_decoration(line);
-        let line = line.trim();
-
-        if JSDOC_TAGS.iter().any(|tag| line.starts_with(tag)) {
-            return true;
-        }
-        if JSDOC_LINKS.iter().any(|link| line.contains(link)) {
-            return true;
-        }
-        if line.contains("```") || line.contains("http://") || line.contains("https://") {
-            return true;
-        }
-        if line.contains("](") {
-            return true;
-        }
-        has_type_brace(line)
-    })
-}
-
-fn has_type_brace(line: &str) -> bool {
-    let mut rest = line;
-    while let Some(start) = rest.find('{') {
-        let after = &rest[start + 1..];
-        let Some(end) = after.find('}') else {
-            return false;
-        };
-        let inner = &after[..end];
-        if inner.chars().any(|c| c.is_ascii_alphabetic()) {
-            return true;
-        }
-        rest = &after[end + 1..];
-    }
-    false
-}
-
 fn is_doc_comment(trimmed: &str) -> bool {
     trimmed.starts_with("///")
         || trimmed.starts_with("//!")
@@ -267,15 +203,6 @@ fn is_directive(content: &str) -> bool {
 
 fn clean_content(raw: &str) -> String {
     raw.trim_end_matches(['\r']).trim_end().to_string()
-}
-
-fn strip_block_decoration(raw: &str) -> String {
-    let trimmed = raw.trim_start();
-    let without_star = trimmed.strip_prefix('*').unwrap_or(trimmed);
-    without_star
-        .strip_prefix(' ')
-        .unwrap_or(without_star)
-        .to_string()
 }
 
 /// NOTE: unterminated block comments are skipped entirely, rewriting a partial
@@ -341,131 +268,16 @@ fn parse_block_comment(
     }
 }
 
-const DECLARATION_WORDS: &[&str] = &[
-    "abstract",
-    "async",
-    "class",
-    "const",
-    "constructor",
-    "declare",
-    "enum",
-    "export",
-    "function",
-    "import",
-    "interface",
-    "let",
-    "module",
-    "namespace",
-    "type",
-    "var",
-];
-
-const MEMBER_MODIFIERS: &[&str] = &[
-    "abstract",
-    "async",
-    "declare",
-    "export",
-    "get",
-    "override",
-    "private",
-    "protected",
-    "public",
-    "readonly",
-    "set",
-    "static",
-];
-
-fn starts_with_word(line: &str, word: &str) -> bool {
-    let Some(rest) = line.strip_prefix(word) else {
-        return false;
-    };
-    rest.starts_with(|ch: char| ch.is_whitespace() || ch == '(')
-}
-
-fn strip_modifier(line: &str) -> Option<&str> {
-    MEMBER_MODIFIERS.iter().find_map(|modifier| {
-        line.strip_prefix(modifier)
-            .filter(|rest| rest.starts_with(char::is_whitespace))
-    })
-}
-
-/// NOTE: a member is `name?: Type`, the shape every prop description in a
-/// `ts` type literal has; without the colon it is a statement, not a member.
-fn is_member_signature(line: &str) -> bool {
-    let mut rest = line.trim_start();
-    while let Some(stripped) = strip_modifier(rest) {
-        rest = stripped.trim_start();
-    }
-
-    let bytes = rest.as_bytes();
-    let Some(first) = bytes.first() else {
-        return false;
-    };
-    if !(first.is_ascii_alphabetic() || *first == b'_' || *first == b'$') {
-        return false;
-    }
-
-    let mut index = 1;
-    while index < bytes.len()
-        && (bytes[index].is_ascii_alphanumeric() || matches!(bytes[index], b'_' | b'$'))
-    {
-        index += 1;
-    }
-    while bytes.get(index) == Some(&b' ') {
-        index += 1;
-    }
-    if matches!(bytes.get(index), Some(b'?' | b'!')) {
-        index += 1;
-        while bytes.get(index) == Some(&b' ') {
-            index += 1;
-        }
-    }
-
-    bytes.get(index) == Some(&b':')
-}
-
-fn is_declaration_line(line: &str) -> bool {
-    let line = line.trim_start();
-    DECLARATION_WORDS
-        .iter()
-        .any(|word| starts_with_word(line, word))
-        || is_member_signature(line)
-}
-
-/// NOTE: the block must touch the declaration, no blank line: TypeScript
-/// attaches JSDoc only to the immediately following item, so a detached block
-/// documents nothing and stays a plain comment.
-fn is_attached_to_declaration(line: Option<&str>) -> bool {
-    line.is_some_and(is_declaration_line)
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct DocPolicy {
-    pub jsdoc: bool,
-    pub plain_allowed: bool,
-}
-
-// NOTE: a tag alone can disguise a note as JSDoc; a detached block documents
-// nothing in TypeScript, so both the tagged and plain paths need attachment.
-fn is_documentation(
-    contents: &[String],
-    next: Option<&str>,
-    plain_marker: bool,
-    policy: DocPolicy,
-) -> bool {
-    is_attached_to_declaration(next)
-        && (is_jsdoc(contents) || (plain_marker && policy.plain_allowed))
-}
-
 #[cfg(test)]
 pub fn parse(source: &str, syntax: &Syntax) -> Vec<CommentBlock> {
     parse_with_doc(source, syntax, false)
 }
 
 pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<CommentBlock> {
-    let policy = DocPolicy {
-        jsdoc: syntax.jsdoc,
-        plain_allowed: plain_doc,
+    let policy = if syntax.jsdoc {
+        DocPolicy::jsdoc(plain_doc)
+    } else {
+        DocPolicy::none()
     };
     let lines: Vec<&str> = source.lines().collect();
     let skip = super::strings::skip_lines(source, syntax);
@@ -501,13 +313,16 @@ pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<Com
             if trimmed.starts_with("/**") || trimmed.starts_with("/*!") {
                 match parse_block_comment(&lines, index, BLOCK_OPEN, BLOCK_CLOSE) {
                     Some(block)
-                        if policy.jsdoc
-                            && is_documentation(
-                                &block.contents,
-                                lines.get(block.end + 1).copied(),
-                                trimmed.starts_with("/**"),
-                                policy,
-                            ) =>
+                        if doc::is_documentation(
+                            &block.contents,
+                            lines.get(block.end + 1).copied(),
+                            if trimmed.starts_with("/**") {
+                                Marker::Plain
+                            } else {
+                                Marker::Bang
+                            },
+                            policy,
+                        ) =>
                     {
                         index = skip_block(&lines, index);
                     }

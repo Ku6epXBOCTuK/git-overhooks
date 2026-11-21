@@ -1,4 +1,5 @@
 pub mod config;
+pub mod doc;
 pub mod parser;
 pub mod rules;
 pub mod strings;
