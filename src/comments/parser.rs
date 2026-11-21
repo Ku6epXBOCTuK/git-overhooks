@@ -439,12 +439,34 @@ fn is_attached_to_declaration(line: Option<&str>) -> bool {
     line.is_some_and(is_declaration_line)
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct DocPolicy {
+    pub jsdoc: bool,
+    pub plain_allowed: bool,
+}
+
+// NOTE: a tag alone can disguise a note as JSDoc; a detached block documents
+// nothing in TypeScript, so both the tagged and plain paths need attachment.
+fn is_documentation(
+    contents: &[String],
+    next: Option<&str>,
+    plain_marker: bool,
+    policy: DocPolicy,
+) -> bool {
+    is_attached_to_declaration(next)
+        && (is_jsdoc(contents) || (plain_marker && policy.plain_allowed))
+}
+
 #[cfg(test)]
 pub fn parse(source: &str, syntax: &Syntax) -> Vec<CommentBlock> {
     parse_with_doc(source, syntax, false)
 }
 
 pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<CommentBlock> {
+    let policy = DocPolicy {
+        jsdoc: syntax.jsdoc,
+        plain_allowed: plain_doc,
+    };
     let lines: Vec<&str> = source.lines().collect();
     let skip = super::strings::skip_lines(source, syntax);
     let mut blocks = Vec::new();
@@ -479,13 +501,13 @@ pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<Com
             if trimmed.starts_with("/**") || trimmed.starts_with("/*!") {
                 match parse_block_comment(&lines, index, BLOCK_OPEN, BLOCK_CLOSE) {
                     Some(block)
-                        if syntax.jsdoc
-                            && (is_jsdoc(&block.contents)
-                                || (plain_doc
-                                    && trimmed.starts_with("/**")
-                                    && is_attached_to_declaration(
-                                        lines.get(block.end + 1).copied(),
-                                    ))) =>
+                        if policy.jsdoc
+                            && is_documentation(
+                                &block.contents,
+                                lines.get(block.end + 1).copied(),
+                                trimmed.starts_with("/**"),
+                                policy,
+                            ) =>
                     {
                         index = skip_block(&lines, index);
                     }
@@ -856,5 +878,27 @@ mod tests {
     fn description_tag_is_jsdoc() {
         let source = "/** @description Text. */\nlet x = 1;\n";
         assert!(parse(source, &script()).is_empty());
+    }
+
+    #[test]
+    fn detached_tagged_jsdoc_is_collected() {
+        let source = "/** @description Text. */\n\nlet x = 1;\n";
+        let blocks = parse(source, &script());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].contents, vec!["* @description Text. "]);
+    }
+
+    #[test]
+    fn detached_jsdoc_link_is_collected() {
+        let source = "/** see {@link helper} */\n\nfunction run() {}\n";
+        let blocks = parse(source, &script());
+        assert_eq!(blocks.len(), 1);
+    }
+
+    #[test]
+    fn tagged_jsdoc_above_statement_is_collected() {
+        let source = "function render() {\n  /** @returns Text. */\n  return value;\n}\n";
+        let blocks = parse(source, &script());
+        assert_eq!(blocks.len(), 1);
     }
 }

@@ -28,11 +28,12 @@ COMMENTS
    go:generate, vim: ...), Rust doc comments /// and //!, and real JSDoc in
    js/ts/svelte/vue/astro: a /** */ block with a tag (@param, @returns, @type,
    @deprecated, ...), a {type}, a {@link X} or markdown.
-   A plain /** */ block is a normal comment unless it is listed in [comments]
-   doc_paths and sits directly above a declaration (interface, type, export
-   const, function, class, enum) or a type member (label?: string;). A blank
-   line between the block and the declaration detaches it. Skipped documentation
-   is not checked for max_lines or non-ASCII.
+   Every /** */ block must sit directly above a declaration (interface, type,
+   export const, function, class, enum) or a type member (label?: string;).
+   A blank line between the block and the declaration detaches it and makes it
+   a normal comment. A /** */ without a JSDoc signal also needs its path listed
+   in [comments] doc_paths. Skipped documentation is not checked for max_lines
+   or non-ASCII.
    Text inside string literals is not a comment.
 
 RULES
@@ -58,7 +59,8 @@ SETTINGS
    [comments] keys: max_lines (default 3), doc_paths (default []), keywords table.
    doc_paths patterns are relative to the repository root; a trailing /** or / is
    dropped, so "src/components/**" covers every file in that directory. Empty
-   doc_paths means only JSDoc with a signal is skipped.
+   doc_paths means only JSDoc with a signal that is attached to a declaration
+   is skipped.
    An unknown key or a broken config stops the run with an error.
 
 EXIT CODE

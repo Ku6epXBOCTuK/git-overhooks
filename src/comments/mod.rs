@@ -607,4 +607,19 @@ mod tests {
         assert_eq!(output, None);
         assert!(findings.is_empty());
     }
+
+    #[test]
+    fn detached_description_tag_outside_doc_paths_is_reported() {
+        let (output, findings) = process_source(
+            "/** @description Text. */\n\nlet x = 1;\n",
+            "src/App.ts",
+            &syntax(),
+            &CommentConfig::default(),
+            false,
+        );
+        assert_eq!(output, None);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].action, Action::NoKeyword);
+        assert_eq!(findings[0].line, 1);
+    }
 }
