@@ -31,6 +31,9 @@ pub struct WriteOptions {
     remove: bool,
 }
 
+pub const LONG_ABOUT: &str = "Enforce comment rules: keyword, length, ascii.";
+pub const HELP: &str = include_str!("comments_help.txt");
+
 pub fn command_comments(args: &CommentsArgs) -> Result<(), AppError> {
     let root = repo_root()?;
 
