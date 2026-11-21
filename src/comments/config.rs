@@ -10,8 +10,8 @@ pub use crate::common::{CONFIG_FILE, IGNORE_FILE};
 pub const DEFAULT_CONFIG: &str = r#"[comments]
 max_lines = 3
 
-# NOTE: plain /** */ blocks are accepted only in these paths and only when
-# attached to a declaration; empty means "only JSDoc with a signal".
+# NOTE: plain documentation blocks are accepted only in these paths; empty
+# means "only documentation with a signal".
 doc_paths = []
 
 # NOTE: key is the canonical spelling, values are punctuation variants.

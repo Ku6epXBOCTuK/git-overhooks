@@ -2,6 +2,7 @@
 pub enum DocPolicy {
     None,
     JsDoc { plain_allowed: bool },
+    RustDoc { plain_allowed: bool },
 }
 
 impl DocPolicy {
@@ -11,6 +12,10 @@ impl DocPolicy {
 
     pub fn jsdoc(plain_allowed: bool) -> Self {
         Self::JsDoc { plain_allowed }
+    }
+
+    pub fn rustdoc(plain_allowed: bool) -> Self {
+        Self::RustDoc { plain_allowed }
     }
 }
 
@@ -99,6 +104,67 @@ pub fn signal(contents: &[String]) -> Option<Signal> {
         }
         if has_type_brace(line) {
             return Some(Signal::Type);
+        }
+    }
+    None
+}
+
+fn rust_code_indent(raw: &str) -> usize {
+    let mut chars = raw.chars().peekable();
+    let mut indent: usize = 0;
+    let mut star = false;
+    while let Some(ch) = chars.peek().copied() {
+        match ch {
+            ' ' => indent += 1,
+            '*' if !star => star = true,
+            _ => break,
+        }
+        chars.next();
+    }
+    if star {
+        indent.saturating_sub(1)
+    } else {
+        indent
+    }
+}
+
+fn is_rust_param_line(line: &str) -> bool {
+    let Some(rest) = line
+        .strip_prefix("- ")
+        .or_else(|| line.strip_prefix("* "))
+        .or_else(|| line.strip_prefix("| "))
+    else {
+        return false;
+    };
+    rest.starts_with('`') && rest[1..].contains('`')
+}
+
+// NOTE: a bare `/// note` is a note, not documentation. rustdoc markers only
+// become documentation when the body carries a section, code, a link or a
+// parameter description, the same way a JSDoc block needs a signal.
+pub fn rust_signal(contents: &[String]) -> Option<Signal> {
+    for raw in contents {
+        let cleaned = strip_block_decoration(raw);
+        let line = cleaned.trim();
+
+        if line.starts_with('#') && line.len() > 1 {
+            return Some(Signal::Tag);
+        }
+        if line.starts_with("```") || line.starts_with("    ") || rust_code_indent(raw) >= 4 {
+            return Some(Signal::Code);
+        }
+        if line.contains("](")
+            || line.contains("][")
+            || line.contains("`]")
+            || line.starts_with("<http")
+        {
+            return Some(Signal::Link);
+        }
+        if is_rust_param_line(line) {
+            return Some(Signal::Tag);
+        }
+        if line.contains('`') {
+            return Some(Signal::Code);
         }
     }
     None
@@ -215,6 +281,12 @@ pub fn is_documentation(
         DocPolicy::JsDoc { plain_allowed } => {
             is_attached_to_declaration(next)
                 && (signal(contents).is_some() || (marker == Marker::Plain && plain_allowed))
+        }
+        // NOTE: the `///` marker already attaches a rustdoc block to the next
+        // item, and `//!` attaches it to the enclosing one, so there is no
+        // declaration check here.
+        DocPolicy::RustDoc { plain_allowed } => {
+            rust_signal(contents).is_some() || (marker == Marker::Plain && plain_allowed)
         }
     }
 }
@@ -371,6 +443,77 @@ mod tests {
             Some("let x = 1;"),
             Marker::Plain,
             DocPolicy::none()
+        ));
+    }
+
+    #[test]
+    fn rust_signals_are_detected() {
+        let cases: &[&[&str]] = &[
+            &[" ```rust"],
+            &["     let x = 1;"],
+            &[" # Examples"],
+            &[" #![allow(dead_code)]"],
+            &[" [`Item`] and more"],
+            &[" [text](https://example.com)"],
+            &[" - `arg`: the value"],
+            &[" * `arg` - the value"],
+            &[" | `arg` | the value |"],
+            &[" use `foo` here"],
+        ];
+        for lines in cases {
+            assert!(rust_signal(&contents(lines)).is_some(), "{lines:?}");
+        }
+    }
+
+    #[test]
+    fn rust_indented_code_signal_survives_block_star() {
+        assert!(rust_signal(&contents(&[" *     let x = 1;"])).is_some());
+    }
+
+    #[test]
+    fn rust_plain_prose_has_no_signal() {
+        assert_eq!(rust_signal(&contents(&[" note"])), None);
+    }
+
+    #[test]
+    fn rust_doc_with_signal_is_documentation() {
+        assert!(is_documentation(
+            &contents(&[" # Examples"]),
+            None,
+            Marker::Plain,
+            DocPolicy::rustdoc(false)
+        ));
+        assert!(is_documentation(
+            &contents(&[" ```rust"]),
+            None,
+            Marker::Bang,
+            DocPolicy::rustdoc(false)
+        ));
+    }
+
+    #[test]
+    fn rust_doc_without_signal_is_not_documentation() {
+        assert!(!is_documentation(
+            &contents(&[" note"]),
+            Some("fn internal() {}"),
+            Marker::Plain,
+            DocPolicy::rustdoc(false)
+        ));
+    }
+
+    #[test]
+    fn rust_plain_doc_needs_opt_in() {
+        assert!(is_documentation(
+            &contents(&[" note"]),
+            None,
+            Marker::Plain,
+            DocPolicy::rustdoc(true)
+        ));
+        assert!(!is_documentation(
+            &contents(&[" note"]),
+            None,
+            Marker::Bang,
+            DocPolicy::rustdoc(true)
         ));
     }
 }

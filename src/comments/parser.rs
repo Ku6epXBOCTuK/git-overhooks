@@ -7,7 +7,7 @@ pub struct Syntax {
     pub line: &'static [&'static str],
     pub block: bool,
     pub html: bool,
-    pub jsdoc: bool,
+    pub doc: DocPolicy,
     pub strings: StringStyle,
 }
 
@@ -35,17 +35,20 @@ fn string_style(ext: &str) -> StringStyle {
 pub fn syntax_for(path: &Path) -> Option<Syntax> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
 
-    let (line, block, html, jsdoc): (&[&str], bool, bool, bool) = match ext.as_str() {
-        "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs" => (SLASH, true, false, true),
-        "rs" | "css" | "scss" | "sass" | "less" | "go" | "c" | "h" | "cc" | "cpp" | "hpp"
-        | "java" | "kt" | "kts" | "cs" | "swift" | "scala" | "php" | "m" | "mm" | "dart"
-        | "zig" | "groovy" | "gradle" => (SLASH, true, false, false),
-        "svelte" | "vue" | "astro" => (SLASH, true, true, true),
-        "html" | "htm" | "xml" | "svg" => (SLASH, true, true, false),
+    let (line, block, html, doc): (&[&str], bool, bool, DocPolicy) = match ext.as_str() {
+        "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs" => {
+            (SLASH, true, false, DocPolicy::jsdoc(false))
+        }
+        "rs" => (SLASH, true, false, DocPolicy::rustdoc(false)),
+        "css" | "scss" | "sass" | "less" | "go" | "c" | "h" | "cc" | "cpp" | "hpp" | "java"
+        | "kt" | "kts" | "cs" | "swift" | "scala" | "php" | "m" | "mm" | "dart" | "zig"
+        | "groovy" | "gradle" => (SLASH, true, false, DocPolicy::none()),
+        "svelte" | "vue" | "astro" => (SLASH, true, true, DocPolicy::jsdoc(false)),
+        "html" | "htm" | "xml" | "svg" => (SLASH, true, true, DocPolicy::none()),
         "py" | "rb" | "sh" | "bash" | "zsh" | "fish" | "ps1" | "toml" | "yaml" | "yml" | "pl"
         | "pm" | "r" | "jl" | "ex" | "exs" | "nim" | "make" | "mk" | "tf" | "hcl" | "cfg"
-        | "ini" => (HASH, false, false, false),
-        "sql" | "lua" | "hs" | "adb" => (DASH, false, false, false),
+        | "ini" => (HASH, false, false, DocPolicy::none()),
+        "sql" | "lua" | "hs" | "adb" => (DASH, false, false, DocPolicy::none()),
         _ => return None,
     };
 
@@ -53,7 +56,7 @@ pub fn syntax_for(path: &Path) -> Option<Syntax> {
         line,
         block,
         html,
-        jsdoc,
+        doc,
         strings: string_style(&ext),
     })
 }
@@ -89,8 +92,15 @@ const DIRECTIVES: &[&str] = &[
     "vscode:",
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommentKind {
+    Note,
+    RustDoc,
+}
+
 #[derive(Debug, Clone)]
 pub struct CommentBlock {
+    pub kind: CommentKind,
     pub start: usize,
     pub end: usize,
     pub marker: String,
@@ -205,6 +215,35 @@ fn clean_content(raw: &str) -> String {
     raw.trim_end_matches(['\r']).trim_end().to_string()
 }
 
+fn parse_rust_line_doc(lines: &[&str], start: usize, marker: &str, skip: &[bool]) -> CommentBlock {
+    let first = lines[start];
+    let trimmed = first.trim_start_matches('\u{feff}').trim_start();
+    let leading_offset = first.len() - trimmed.len();
+    let indent = first[..leading_offset].to_string();
+    let mut contents = vec![clean_content(&trimmed[marker.len()..])];
+    let mut end = start;
+
+    while end + 1 < lines.len() && !skip[end + 1] {
+        let next = lines[end + 1].trim_start();
+        if !next.starts_with(marker) {
+            break;
+        }
+        contents.push(clean_content(&next[marker.len()..]));
+        end += 1;
+    }
+
+    CommentBlock {
+        kind: CommentKind::Note,
+        start,
+        end,
+        marker: marker.to_string(),
+        indent,
+        pre: String::new(),
+        close: None,
+        contents,
+    }
+}
+
 /// NOTE: unterminated block comments are skipped entirely, rewriting a partial
 /// comment would risk eating real code.
 fn parse_block_comment(
@@ -226,6 +265,7 @@ fn parse_block_comment(
         let end = start;
         let close = body[index..].trim_end_matches(['\r']).to_string();
         return Some(CommentBlock {
+            kind: CommentKind::Note,
             start,
             end,
             marker: marker.to_string(),
@@ -254,6 +294,7 @@ fn parse_block_comment(
                     close_token
                 );
                 return Some(CommentBlock {
+                    kind: CommentKind::Note,
                     start,
                     end,
                     marker: marker.to_string(),
@@ -274,10 +315,10 @@ pub fn parse(source: &str, syntax: &Syntax) -> Vec<CommentBlock> {
 }
 
 pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<CommentBlock> {
-    let policy = if syntax.jsdoc {
-        DocPolicy::jsdoc(plain_doc)
-    } else {
-        DocPolicy::none()
+    let policy = match syntax.doc {
+        DocPolicy::JsDoc { .. } => DocPolicy::jsdoc(plain_doc),
+        DocPolicy::RustDoc { .. } => DocPolicy::rustdoc(plain_doc),
+        DocPolicy::None => DocPolicy::none(),
     };
     let lines: Vec<&str> = source.lines().collect();
     let skip = super::strings::skip_lines(source, syntax);
@@ -324,7 +365,13 @@ pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<Com
                             policy,
                         ) =>
                     {
-                        index = skip_block(&lines, index);
+                        if matches!(policy, DocPolicy::RustDoc { .. }) {
+                            blocks.push(CommentBlock {
+                                kind: CommentKind::RustDoc,
+                                ..block
+                            });
+                        }
+                        index = block.end + 1;
                     }
                     Some(block) => {
                         index = block.end + 1;
@@ -348,7 +395,35 @@ pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<Com
             continue;
         }
 
-        if is_doc_comment(trimmed) {
+        if matches!(policy, DocPolicy::RustDoc { .. })
+            && (trimmed.starts_with("///") || trimmed.starts_with("//!"))
+        {
+            let marker = if trimmed.starts_with("///") {
+                "///"
+            } else {
+                "//!"
+            };
+            let mut block = parse_rust_line_doc(&lines, index, marker, &skip);
+            let next = lines.get(block.end + 1).copied();
+            let is_doc = doc::is_documentation(
+                &block.contents,
+                next,
+                if marker == "///" {
+                    Marker::Plain
+                } else {
+                    Marker::Bang
+                },
+                policy,
+            );
+            if is_doc {
+                block.kind = CommentKind::RustDoc;
+            }
+            index = block.end + 1;
+            blocks.push(block);
+            continue;
+        }
+
+        if !matches!(policy, DocPolicy::RustDoc { .. }) && is_doc_comment(trimmed) {
             index += 1;
             continue;
         }
@@ -402,6 +477,7 @@ pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<Com
         }
 
         blocks.push(CommentBlock {
+            kind: CommentKind::Note,
             start: index,
             end,
             marker: marker.to_string(),
@@ -437,7 +513,7 @@ mod tests {
             line: SLASH,
             block: true,
             html: false,
-            jsdoc: false,
+            doc: DocPolicy::none(),
             strings: StringStyle::default(),
         }
     }
@@ -447,7 +523,7 @@ mod tests {
             line: HASH,
             block: false,
             html: false,
-            jsdoc: false,
+            doc: DocPolicy::none(),
             strings: StringStyle::default(),
         }
     }
@@ -457,7 +533,7 @@ mod tests {
             line: SLASH,
             block: true,
             html: true,
-            jsdoc: false,
+            doc: DocPolicy::none(),
             strings: StringStyle::default(),
         }
     }
@@ -467,9 +543,13 @@ mod tests {
             line: SLASH,
             block: true,
             html: false,
-            jsdoc: true,
+            doc: DocPolicy::jsdoc(false),
             strings: StringStyle::default(),
         }
+    }
+
+    fn rust() -> Syntax {
+        syntax_for(Path::new("a.rs")).unwrap()
     }
 
     #[test]
@@ -715,5 +795,55 @@ mod tests {
         let source = "function render() {\n  /** @returns Text. */\n  return value;\n}\n";
         let blocks = parse(source, &script());
         assert_eq!(blocks.len(), 1);
+    }
+
+    #[test]
+    fn rust_doc_with_signal_is_collected_as_documentation() {
+        let source = "/// # Examples\n/// ```rust\n/// f();\n/// ```\nfn f() {}\n";
+        let blocks = parse(source, &rust());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, CommentKind::RustDoc);
+        assert_eq!(blocks[0].start, 0);
+        assert_eq!(blocks[0].end, 3);
+    }
+
+    #[test]
+    fn rust_doc_without_signal_is_a_normal_comment() {
+        let source = "/// note\nfn internal() {}\n";
+        let blocks = parse(source, &rust());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, CommentKind::Note);
+        assert_eq!(blocks[0].contents, vec![" note"]);
+    }
+
+    #[test]
+    fn rust_inner_doc_without_signal_is_a_normal_comment() {
+        let source = "//! note\nfn main() {}\n";
+        let blocks = parse(source, &rust());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, CommentKind::Note);
+        assert_eq!(blocks[0].contents, vec![" note"]);
+    }
+
+    #[test]
+    fn rust_block_doc_with_signal_is_documentation() {
+        let source = "/**\n * # Examples\n * ```rust\n * f();\n * ```\n */\nfn f() {}\n";
+        let blocks = parse(source, &rust());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, CommentKind::RustDoc);
+    }
+
+    #[test]
+    fn rust_indented_doc_does_not_swallow_next_comment() {
+        let source = "///     let x = 1;\nfn f() {}\n// NOTE: keep\n";
+        let blocks = parse(source, &rust());
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].kind, CommentKind::RustDoc);
+        assert_eq!(blocks[1].kind, CommentKind::Note);
+    }
+
+    #[test]
+    fn triple_slash_still_skipped_outside_rust() {
+        assert!(parse("/// <reference path=\"a.d.ts\" />\nlet x = 1;\n", &script()).is_empty());
     }
 }

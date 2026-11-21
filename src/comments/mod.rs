@@ -9,7 +9,7 @@ use std::path::Path;
 use crate::{check, error::AppError, ignore::Ignores};
 
 use config::CommentConfig;
-use parser::Syntax;
+use parser::{CommentKind, Syntax};
 use rules::Action;
 
 #[derive(Debug)]
@@ -69,7 +69,7 @@ pub fn process_source(
             })
             .collect();
 
-        let removed = outcome.keyword.is_none() && remove;
+        let removed = block.kind == CommentKind::Note && outcome.keyword.is_none() && remove;
 
         if removed {
             // NOTE: a block that disappears takes all its other problems with
@@ -241,6 +241,9 @@ fn describe(finding: &Finding, expected: &str, write: bool, remove: bool) -> Str
             let keyword = finding.keyword.as_deref().unwrap_or("without keyword");
             format!("non-ascii characters in comment (keyword {keyword})")
         }
+        Action::DocNonAscii => {
+            "non-ascii characters in rust doc: documentation must be in English".to_string()
+        }
     }
 }
 
@@ -291,15 +294,30 @@ fn print_skipped(report: &Report) {
 mod tests {
     use super::*;
     use crate::comments;
+    use doc::DocPolicy;
 
     fn syntax() -> Syntax {
         Syntax {
             line: &["//"],
             block: true,
             html: false,
-            jsdoc: true,
+            doc: DocPolicy::jsdoc(false),
             strings: crate::comments::strings::StringStyle::default(),
         }
+    }
+
+    fn rust_syntax() -> Syntax {
+        parser::syntax_for(Path::new("a.rs")).unwrap()
+    }
+
+    fn run_rust(source: &str, remove: bool) -> (Option<String>, Vec<Finding>) {
+        process_source(
+            source,
+            "a.rs",
+            &rust_syntax(),
+            &CommentConfig::default(),
+            remove,
+        )
     }
 
     fn run(source: &str) -> (Option<String>, Vec<Finding>) {
@@ -622,5 +640,43 @@ mod tests {
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].action, Action::NoKeyword);
         assert_eq!(findings[0].line, 1);
+    }
+
+    #[test]
+    fn rust_doc_non_ascii_is_reported_not_rewritten() {
+        let source = "/// # Примеры\n/// text\nfn f() {}\n";
+        let (output, findings) = run_rust(source, false);
+        assert_eq!(output, None);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].action, Action::DocNonAscii);
+        assert_eq!(findings[0].line, 1);
+    }
+
+    #[test]
+    fn rust_doc_is_not_removed() {
+        let source = "/// # Examples\n/// text\nfn f() {}\n";
+        let (output, findings) = run_rust(source, true);
+        assert_eq!(output, None);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn rust_doc_ascii_is_clean() {
+        let source = "/// Returns `value`.\n///\n/// # Examples\n///\n/// let x = 1;\nfn f() {}\n";
+        let (output, findings) = run_rust(source, false);
+        assert_eq!(output, None);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn plain_rust_doc_is_a_normal_comment() {
+        let source = "/// just a note\nfn f() {}\n";
+        let (output, findings) = run_rust(source, false);
+        assert_eq!(output, None);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].action, Action::NoKeyword);
+
+        let (output, _) = run_rust(source, true);
+        assert_eq!(output.as_deref(), Some("fn f() {}\n"));
     }
 }

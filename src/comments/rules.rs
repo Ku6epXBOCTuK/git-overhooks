@@ -1,4 +1,7 @@
-use super::{config::CommentConfig, parser::CommentBlock};
+use super::{
+    config::CommentConfig,
+    parser::{CommentBlock, CommentKind},
+};
 
 #[derive(Debug, Clone)]
 pub struct Head {
@@ -123,6 +126,7 @@ pub enum Action {
     Normalized,
     Truncated { lines: usize, max: usize },
     NonAscii,
+    DocNonAscii,
 }
 
 #[derive(Debug, Clone)]
@@ -139,6 +143,19 @@ pub struct Outcome {
 }
 
 pub fn apply(block: &CommentBlock, config: &CommentConfig) -> Outcome {
+    if block.kind == CommentKind::RustDoc {
+        let actions = if block.contents.iter().any(|line| !line.is_ascii()) {
+            vec![Action::DocNonAscii]
+        } else {
+            Vec::new()
+        };
+        return Outcome {
+            block: block.clone(),
+            actions,
+            keyword: None,
+        };
+    }
+
     let mut contents = block.contents.clone();
 
     while contents.len() > 1 && contents.last().is_some_and(|c| c.trim().is_empty()) {
@@ -211,14 +228,17 @@ pub fn apply(block: &CommentBlock, config: &CommentConfig) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::comments::parser::{self, Syntax};
+    use crate::comments::{
+        doc::DocPolicy,
+        parser::{self, Syntax},
+    };
 
     fn blocks(source: &str) -> Vec<CommentBlock> {
         let syntax = Syntax {
             line: &["//"],
             block: true,
             html: false,
-            jsdoc: true,
+            doc: DocPolicy::jsdoc(false),
             strings: crate::comments::strings::StringStyle::default(),
         };
         parser::parse(source, &syntax)
@@ -249,6 +269,13 @@ mod tests {
 
     fn outcome(source: &str) -> Outcome {
         apply(&blocks(source).remove(0), &CommentConfig::default())
+    }
+
+    fn rust_outcome(source: &str) -> Outcome {
+        let syntax = parser::syntax_for(std::path::Path::new("a.rs")).unwrap();
+        let block = parser::parse_with_doc(source, &syntax, false).remove(0);
+        assert_eq!(block.kind, CommentKind::RustDoc);
+        apply(&block, &CommentConfig::default())
     }
 
     #[test]
@@ -403,5 +430,26 @@ mod tests {
     fn render_keeps_code_around_trailing_comment() {
         let source = "let x = 1; // NOTE: it\n";
         assert_eq!(render(source), source);
+    }
+
+    #[test]
+    fn rust_doc_reports_only_ascii() {
+        let outcome = rust_outcome("/// # Примеры\n/// text\nfn f() {}\n");
+        assert_eq!(outcome.actions, vec![Action::DocNonAscii]);
+        assert_eq!(outcome.block.contents, vec![" # Примеры", " text"]);
+    }
+
+    #[test]
+    fn rust_doc_ascii_has_no_actions() {
+        let outcome = rust_outcome("/// # Examples\n/// text\nfn f() {}\n");
+        assert_eq!(outcome.actions, Vec::new());
+        assert!(outcome.keyword.is_none());
+    }
+
+    #[test]
+    fn rust_doc_ignores_keyword_and_length() {
+        let source = "/// # Examples\n/// note: one\n/// two\n/// three\n/// four\nfn f() {}\n";
+        let outcome = rust_outcome(source);
+        assert_eq!(outcome.actions, Vec::new());
     }
 }

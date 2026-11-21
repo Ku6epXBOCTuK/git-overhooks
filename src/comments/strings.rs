@@ -359,13 +359,14 @@ pub fn skip_lines(source: &str, syntax: &Syntax) -> Vec<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::comments::doc::DocPolicy;
 
     fn syntax(style: StringStyle) -> Syntax {
         Syntax {
             line: &["//"],
             block: true,
             html: false,
-            jsdoc: true,
+            doc: DocPolicy::jsdoc(false),
             strings: style,
         }
     }
