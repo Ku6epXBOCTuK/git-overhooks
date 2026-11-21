@@ -1,0 +1,21 @@
+{
+  "name": "git-overhooks",
+  "version": "0.1.0",
+  "description": "Git hooks manager. Use global and local hooks without fear.",
+  "license": "MIT",
+  "scripts": {
+    "format": "biome format --write ."
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.18.0",
+      "onFail": "download"
+    }
+  },
+  "packageManager": "pnpm@12.18.0",
+  "type": "module",
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.5"
+  }
+}
