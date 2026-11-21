@@ -268,6 +268,84 @@ fn is_attached_to_declaration(line: Option<&str>) -> bool {
     line.is_some_and(is_declaration_line)
 }
 
+const RUST_PREFIXES: &[&str] = &["async", "unsafe", "default", "extern"];
+const RUST_ITEMS: &[&str] = &[
+    "fn",
+    "struct",
+    "enum",
+    "trait",
+    "impl",
+    "mod",
+    "const",
+    "static",
+    "type",
+    "union",
+    "use",
+    "macro_rules!",
+];
+
+fn is_rust_field_signature(rest: &str) -> bool {
+    let bytes = rest.as_bytes();
+    let Some(first) = bytes.first() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || *first == b'_') {
+        return false;
+    }
+    let mut index = 1;
+    while bytes
+        .get(index)
+        .is_some_and(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_'))
+    {
+        index += 1;
+    }
+    while bytes.get(index) == Some(&b'?') {
+        index += 1;
+    }
+    while bytes.get(index) == Some(&b' ') {
+        index += 1;
+    }
+    bytes.get(index) == Some(&b':')
+}
+
+fn is_public_rust_declaration(line: Option<&str>) -> bool {
+    let Some(line) = line else {
+        return false;
+    };
+    let Some(after_pub) = line.trim_start().strip_prefix("pub") else {
+        return false;
+    };
+    let rest = if let Some(after_paren) = after_pub.strip_prefix('(') {
+        let Some(end) = after_paren.find(')') else {
+            return false;
+        };
+        after_paren[end + 1..].trim_start()
+    } else if after_pub.starts_with(char::is_whitespace) {
+        after_pub.trim_start()
+    } else {
+        return false;
+    };
+
+    let tokens: Vec<&str> = rest.split_whitespace().collect();
+    let mut index = 0;
+    while tokens
+        .get(index)
+        .is_some_and(|token| RUST_PREFIXES.contains(token))
+    {
+        index += 1;
+        if tokens
+            .get(index)
+            .is_some_and(|token| token.starts_with('"'))
+        {
+            index += 1;
+        }
+    }
+    is_rust_field_signature(rest)
+        || tokens
+            .get(index)
+            .is_some_and(|token| RUST_ITEMS.contains(token))
+}
+
 // NOTE: a tag alone can disguise a note as JSDoc; a detached block documents
 // nothing in TypeScript, so both the tagged and plain paths need attachment.
 pub fn is_documentation(
@@ -282,11 +360,10 @@ pub fn is_documentation(
             is_attached_to_declaration(next)
                 && (signal(contents).is_some() || (marker == Marker::Plain && plain_allowed))
         }
-        // NOTE: the `///` marker already attaches a rustdoc block to the next
-        // item, and `//!` attaches it to the enclosing one, so there is no
-        // declaration check here.
         DocPolicy::RustDoc { plain_allowed } => {
-            rust_signal(contents).is_some() || (marker == Marker::Plain && plain_allowed)
+            let attached = marker == Marker::Bang || is_public_rust_declaration(next);
+            attached
+                && (rust_signal(contents).is_some() || (marker == Marker::Plain && plain_allowed))
         }
     }
 }
@@ -479,7 +556,7 @@ mod tests {
     fn rust_doc_with_signal_is_documentation() {
         assert!(is_documentation(
             &contents(&[" # Examples"]),
-            None,
+            Some("pub fn f() {}"),
             Marker::Plain,
             DocPolicy::rustdoc(false)
         ));
@@ -487,6 +564,58 @@ mod tests {
             &contents(&[" ```rust"]),
             None,
             Marker::Bang,
+            DocPolicy::rustdoc(false)
+        ));
+    }
+
+    #[test]
+    fn rust_public_declaration_detection() {
+        for line in [
+            "pub fn f() {}",
+            "pub(crate) fn f() {}",
+            "pub(super) struct S;",
+            "pub(in crate::inner) mod m;",
+            "pub async unsafe fn f() {}",
+            "pub extern \"C\" fn f() {}",
+            "pub const X: u32 = 1;",
+            "pub use foo::Bar;",
+            "    pub broken_encoding: Vec<String>,",
+            "pub(crate) field: u32,",
+        ] {
+            assert!(is_public_rust_declaration(Some(line)), "{line}");
+        }
+        for line in [
+            "fn f() {}",
+            "let x = 1;",
+            "",
+            "#[inline]",
+            "pub(crate)",
+            "pubfn f() {}",
+            "// pub fn f() {}",
+        ] {
+            assert!(!is_public_rust_declaration(Some(line)), "{line}");
+        }
+        assert!(!is_public_rust_declaration(None));
+    }
+
+    #[test]
+    fn rust_doc_needs_public_declaration() {
+        assert!(!is_documentation(
+            &contents(&[" # Examples"]),
+            Some("fn internal() {}"),
+            Marker::Plain,
+            DocPolicy::rustdoc(false)
+        ));
+        assert!(!is_documentation(
+            &contents(&[" # Examples"]),
+            Some(""),
+            Marker::Plain,
+            DocPolicy::rustdoc(false)
+        ));
+        assert!(!is_documentation(
+            &contents(&[" # Examples"]),
+            Some("    let x = 1;"),
+            Marker::Plain,
             DocPolicy::rustdoc(false)
         ));
     }
@@ -505,7 +634,13 @@ mod tests {
     fn rust_plain_doc_needs_opt_in() {
         assert!(is_documentation(
             &contents(&[" note"]),
-            None,
+            Some("pub fn f() {}"),
+            Marker::Plain,
+            DocPolicy::rustdoc(true)
+        ));
+        assert!(!is_documentation(
+            &contents(&[" note"]),
+            Some("fn internal() {}"),
             Marker::Plain,
             DocPolicy::rustdoc(true)
         ));

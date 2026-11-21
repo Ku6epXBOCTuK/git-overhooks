@@ -434,21 +434,21 @@ mod tests {
 
     #[test]
     fn rust_doc_reports_only_ascii() {
-        let outcome = rust_outcome("/// # Примеры\n/// text\nfn f() {}\n");
+        let outcome = rust_outcome("/// # Примеры\n/// text\npub fn f() {}\n");
         assert_eq!(outcome.actions, vec![Action::DocNonAscii]);
         assert_eq!(outcome.block.contents, vec![" # Примеры", " text"]);
     }
 
     #[test]
     fn rust_doc_ascii_has_no_actions() {
-        let outcome = rust_outcome("/// # Examples\n/// text\nfn f() {}\n");
+        let outcome = rust_outcome("/// # Examples\n/// text\npub fn f() {}\n");
         assert_eq!(outcome.actions, Vec::new());
         assert!(outcome.keyword.is_none());
     }
 
     #[test]
     fn rust_doc_ignores_keyword_and_length() {
-        let source = "/// # Examples\n/// note: one\n/// two\n/// three\n/// four\nfn f() {}\n";
+        let source = "/// # Examples\n/// note: one\n/// two\n/// three\n/// four\npub fn f() {}\n";
         let outcome = rust_outcome(source);
         assert_eq!(outcome.actions, Vec::new());
     }

@@ -32,10 +32,12 @@ COMMENTS
    @type, @deprecated, ...), a {type}, a {@link X} or markdown.
    Every /** */ block must sit directly above a declaration (interface, type,
    export const, function, class, enum) or a type member (label?: string;).
-   A blank line between the block and the declaration detaches it and makes it
-   a normal comment. A /** */ without a JSDoc signal also needs its path listed
-   in [comments] doc_paths; the same applies to a /// block without a rustdoc
-   signal. Documentation is checked for non-ASCII only: it must be in English.
+   A /// block must sit directly above a public Rust item (pub fn, pub struct,
+   ...); over a private item, inside a function body or detached by a blank
+   line it is a normal comment. A blank line detaches a /** */ block as well.
+   A /** */ without a JSDoc signal also needs its path listed in [comments]
+   doc_paths; the same applies to a /// block without a rustdoc signal.
+   Documentation is checked for non-ASCII only: it must be in English.
    It is never cut or removed, including code samples inside it.
    Text inside string literals is not a comment.
 
@@ -63,7 +65,7 @@ SETTINGS
    doc_paths patterns are relative to the repository root; a trailing /** or / is
    dropped, so "src/components/**" covers every file in that directory. Empty
    doc_paths means only documentation with a signal is accepted: rustdoc blocks
-   and JSDoc blocks attached to a declaration.
+   attached to a public Rust item and JSDoc blocks attached to a declaration.
    An unknown key or a broken config stops the run with an error.
 
 EXIT CODE

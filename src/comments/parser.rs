@@ -206,6 +206,20 @@ fn is_doc_comment(trimmed: &str) -> bool {
         || trimmed.starts_with("* ")
 }
 
+fn next_rust_line<'a>(lines: &[&'a str], mut index: usize) -> Option<&'a str> {
+    let mut depth: usize = 0;
+    while let Some(line) = lines.get(index) {
+        let trimmed = line.trim_start();
+        if depth == 0 && !trimmed.starts_with("#[") {
+            return Some(line);
+        }
+        depth += trimmed.matches('[').count();
+        depth = depth.saturating_sub(trimmed.matches(']').count());
+        index += 1;
+    }
+    None
+}
+
 fn is_directive(content: &str) -> bool {
     let content = content.trim_start_matches([' ', '\t', ':', '-', '*']);
     DIRECTIVES.iter().any(|d| content.starts_with(d))
@@ -356,7 +370,7 @@ pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<Com
                     Some(block)
                         if doc::is_documentation(
                             &block.contents,
-                            lines.get(block.end + 1).copied(),
+                            next_rust_line(&lines, block.end + 1),
                             if trimmed.starts_with("/**") {
                                 Marker::Plain
                             } else {
@@ -404,7 +418,7 @@ pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<Com
                 "//!"
             };
             let mut block = parse_rust_line_doc(&lines, index, marker, &skip);
-            let next = lines.get(block.end + 1).copied();
+            let next = next_rust_line(&lines, block.end + 1);
             let is_doc = doc::is_documentation(
                 &block.contents,
                 next,
@@ -799,7 +813,7 @@ mod tests {
 
     #[test]
     fn rust_doc_with_signal_is_collected_as_documentation() {
-        let source = "/// # Examples\n/// ```rust\n/// f();\n/// ```\nfn f() {}\n";
+        let source = "/// # Examples\n/// ```rust\n/// f();\n/// ```\npub fn f() {}\n";
         let blocks = parse(source, &rust());
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].kind, CommentKind::RustDoc);
@@ -827,7 +841,7 @@ mod tests {
 
     #[test]
     fn rust_block_doc_with_signal_is_documentation() {
-        let source = "/**\n * # Examples\n * ```rust\n * f();\n * ```\n */\nfn f() {}\n";
+        let source = "/**\n * # Examples\n * ```rust\n * f();\n * ```\n */\npub fn f() {}\n";
         let blocks = parse(source, &rust());
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].kind, CommentKind::RustDoc);
@@ -835,11 +849,43 @@ mod tests {
 
     #[test]
     fn rust_indented_doc_does_not_swallow_next_comment() {
-        let source = "///     let x = 1;\nfn f() {}\n// NOTE: keep\n";
+        let source = "///     let x = 1;\npub fn f() {}\n// NOTE: keep\n";
         let blocks = parse(source, &rust());
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].kind, CommentKind::RustDoc);
         assert_eq!(blocks[1].kind, CommentKind::Note);
+    }
+
+    #[test]
+    fn rust_doc_above_private_item_is_a_note() {
+        let source = "/// # Examples\n/// ```rust\n/// f();\n/// ```\nfn internal() {}\n";
+        let blocks = parse(source, &rust());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, CommentKind::Note);
+    }
+
+    #[test]
+    fn rust_doc_inside_body_is_a_note() {
+        let source = "fn outer() {\n    /// # Examples\n    /// ```rust\n    /// f();\n    /// ```\n    let x = 1;\n}\n";
+        let blocks = parse(source, &rust());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, CommentKind::Note);
+    }
+
+    #[test]
+    fn detached_rust_doc_is_a_note() {
+        let source = "/// # Examples\n/// text\n\npub fn f() {}\n";
+        let blocks = parse(source, &rust());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, CommentKind::Note);
+    }
+
+    #[test]
+    fn rust_doc_above_public_item_with_attribute_is_documentation() {
+        let source = "/// # Examples\n/// text\n#[inline]\npub fn f() {}\n";
+        let blocks = parse(source, &rust());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, CommentKind::RustDoc);
     }
 
     #[test]

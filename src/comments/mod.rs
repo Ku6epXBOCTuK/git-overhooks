@@ -644,7 +644,7 @@ mod tests {
 
     #[test]
     fn rust_doc_non_ascii_is_reported_not_rewritten() {
-        let source = "/// # Примеры\n/// text\nfn f() {}\n";
+        let source = "/// # Примеры\n/// text\npub fn f() {}\n";
         let (output, findings) = run_rust(source, false);
         assert_eq!(output, None);
         assert_eq!(findings.len(), 1);
@@ -654,7 +654,7 @@ mod tests {
 
     #[test]
     fn rust_doc_is_not_removed() {
-        let source = "/// # Examples\n/// text\nfn f() {}\n";
+        let source = "/// # Examples\n/// text\npub fn f() {}\n";
         let (output, findings) = run_rust(source, true);
         assert_eq!(output, None);
         assert!(findings.is_empty());
@@ -662,7 +662,8 @@ mod tests {
 
     #[test]
     fn rust_doc_ascii_is_clean() {
-        let source = "/// Returns `value`.\n///\n/// # Examples\n///\n/// let x = 1;\nfn f() {}\n";
+        let source =
+            "/// Returns `value`.\n///\n/// # Examples\n///\n/// let x = 1;\npub fn f() {}\n";
         let (output, findings) = run_rust(source, false);
         assert_eq!(output, None);
         assert!(findings.is_empty());
@@ -678,5 +679,42 @@ mod tests {
 
         let (output, _) = run_rust(source, true);
         assert_eq!(output.as_deref(), Some("fn f() {}\n"));
+    }
+
+    #[test]
+    fn rust_doc_above_private_item_is_a_normal_comment() {
+        let source = "/// # Examples\n/// text\nfn f() {}\n";
+        let (output, findings) = run_rust(source, false);
+        assert_eq!(output, None);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].action, Action::NoKeyword);
+
+        let (output, _) = run_rust(source, true);
+        assert_eq!(output.as_deref(), Some("fn f() {}\n"));
+    }
+
+    #[test]
+    fn rust_doc_above_private_item_reports_plain_non_ascii() {
+        let source = "/// # Примеры\n/// text\nfn f() {}\n";
+        let (_, findings) = run_rust(source, false);
+        assert_eq!(findings.len(), 2);
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.action == Action::NonAscii)
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.action == Action::NoKeyword)
+        );
+    }
+
+    #[test]
+    fn detached_rust_doc_is_a_normal_comment() {
+        let source = "/// # Examples\n/// text\n\npub fn f() {}\n";
+        let (_, findings) = run_rust(source, false);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].action, Action::NoKeyword);
     }
 }
