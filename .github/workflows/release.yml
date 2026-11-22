@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Версия без префикса, например 0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref:
+            ${{ inputs.version && format('v{0}', inputs.version) || github.ref
+            }}
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $raw = if ("${{ inputs.version }}") { "${{ inputs.version }}" } else { "${{ github.ref_name }}" }
+          $version = $raw -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "cannot resolve a version from '$raw'" }
+          $package = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($package -ne $version) { throw "package.json has $package, expected $version" }
+          $cargo = [regex]::Match((Get-Content Cargo.toml -Raw), '(?m)^version = "([^"]+)"$').Groups[1].Value
+          if ($cargo -ne $version) { throw "Cargo.toml has $cargo, expected $version" }
+          $lock = [regex]::Match((Get-Content Cargo.lock -Raw), '(?m)name = "git-overhooks"\r?\nversion = "([^"]+)"').Groups[1].Value
+          if ($lock -ne $version) { throw "Cargo.lock has $lock, expected $version" }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          gh release create "v$version" --title "goh $version" --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
