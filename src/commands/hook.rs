@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    common::{app_dir, warn_user},
+    common::{HOOKS_DIR, app_dir, warn_user},
     error::AppError,
     hooks::{self, Check, HooksConfig},
 };
@@ -21,6 +21,11 @@ pub struct HookArgs {
     pub args: Vec<String>,
 }
 
+enum Step {
+    Builtin(Check),
+    Script(PathBuf),
+}
+
 fn list_sorted_files(dir: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = match fs::read_dir(dir) {
         Ok(entries) => entries
@@ -32,6 +37,13 @@ fn list_sorted_files(dir: &Path) -> Vec<PathBuf> {
     };
     files.sort();
     files
+}
+
+fn file_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn git_path(args: &[&str]) -> Result<PathBuf, AppError> {
@@ -50,35 +62,57 @@ fn git_path(args: &[&str]) -> Result<PathBuf, AppError> {
     Ok(PathBuf::from(stdout))
 }
 
-/// NOTE: resolution order: global, husky, .git-hooks, native .git/hooks.
-fn collect_scripts(root: &Path, hook: &str) -> Result<Vec<PathBuf>, AppError> {
-    let mut scripts = Vec::new();
+/// NOTE: built-ins are keyed by their script names and share the sort order
+/// with user scripts; files with those names are leftovers from old installs.
+fn merge_global(
+    builtins: impl IntoIterator<Item = Check>,
+    scripts: impl IntoIterator<Item = PathBuf>,
+) -> Vec<Step> {
+    let mut named: Vec<(String, Step)> = builtins
+        .into_iter()
+        .map(|check| (check.script_name().to_string(), Step::Builtin(check)))
+        .collect();
 
-    let global_dir = app_dir()
-        .join(crate::common::HOOKS_DIR)
-        .join(format!("{hook}.d"));
-    scripts.extend(list_sorted_files(&global_dir));
+    for path in scripts {
+        let name = file_name(&path);
+        if Check::from_script(&name).is_some() {
+            continue;
+        }
+        named.push((name, Step::Script(path)));
+    }
+    named.sort_by(|a, b| a.0.cmp(&b.0));
+    named.into_iter().map(|(_, step)| step).collect()
+}
+
+/// NOTE: resolution order: global, husky, .git-hooks, native .git/hooks.
+fn collect_steps(root: &Path, hook: &str) -> Result<Vec<Step>, AppError> {
+    let global_dir = app_dir().join(HOOKS_DIR).join(format!("{hook}.d"));
+
+    let builtins = Check::ALL
+        .into_iter()
+        .filter(|check| check.hook_name() == hook);
+    let mut steps = merge_global(builtins, list_sorted_files(&global_dir));
 
     let husky_direct = root.join(".husky").join(hook);
     let husky_inner = root.join(".husky").join("_").join(hook);
     if husky_direct.is_file() {
-        scripts.push(husky_direct);
+        steps.push(Step::Script(husky_direct));
     } else if husky_inner.is_file() {
-        scripts.push(husky_inner);
+        steps.push(Step::Script(husky_inner));
     }
 
     let git_hooks = root.join(".git-hooks").join(hook);
     if git_hooks.is_file() {
-        scripts.push(git_hooks);
+        steps.push(Step::Script(git_hooks));
     }
 
     let git_dir = git_path(&["rev-parse", "--absolute-git-dir"])?;
     let native = git_dir.join("hooks").join(hook);
     if native.is_file() {
-        scripts.push(native);
+        steps.push(Step::Script(native));
     }
 
-    Ok(scripts)
+    Ok(steps)
 }
 
 fn resolve_sh() -> Result<PathBuf, AppError> {
@@ -140,8 +174,8 @@ pub fn command_hook(args: &HookArgs) -> Result<(), AppError> {
     info!("Hook: {}", args.hook);
 
     let root = git_path(&["rev-parse", "--show-toplevel"])?;
-    let scripts = collect_scripts(&root, &args.hook)?;
-    if scripts.is_empty() {
+    let steps = collect_steps(&root, &args.hook)?;
+    if steps.is_empty() {
         debug!("No scripts for hook: {}", args.hook);
         return Ok(());
     }
@@ -150,43 +184,77 @@ pub fn command_hook(args: &HookArgs) -> Result<(), AppError> {
     let key = hooks::repo_key(&root);
     let path = hooks::path_key(&root);
 
-    let scripts: Vec<PathBuf> = scripts
-        .into_iter()
-        .filter(|script| {
-            let check = script
-                .file_name()
-                .and_then(|name| name.to_str())
-                .and_then(Check::from_script);
+    let has_scripts = steps.iter().any(|step| matches!(step, Step::Script(_)));
+    let sh = has_scripts.then(resolve_sh).transpose()?;
+    let goh_bin = has_scripts.then(current_exe).transpose()?;
 
-            match check {
-                Some(check) if config.is_disabled(&key, &path, check) => {
-                    debug!(
-                        "Ignore {}: {} is disabled for {key}",
-                        script.display(),
-                        check.name()
-                    );
+    for step in steps {
+        match step {
+            Step::Builtin(check) => {
+                if config.is_disabled(&key, &path, check) {
+                    debug!("Ignore {} for {key}", check.name());
                     warn_user(format!("{}: ignored", check.name()));
-                    false
+                    continue;
                 }
-                _ => true,
+                check.run(&root)?;
             }
-        })
-        .collect();
-
-    if scripts.is_empty() {
-        debug!("Every check is ignored for {key}");
-        return Ok(());
-    }
-    debug!("Scripts: {}", scripts.len());
-
-    let sh = resolve_sh()?;
-    debug!("sh: {}", sh.display());
-    let goh_bin = current_exe()?;
-
-    for script in &scripts {
-        run_script(&sh, script, &args.args, &goh_bin)?;
+            Step::Script(script) => {
+                let sh = sh.as_ref().expect("sh is resolved when scripts exist");
+                let goh_bin = goh_bin
+                    .as_ref()
+                    .expect("goh_bin is resolved when scripts exist");
+                run_script(sh, &script, &args.args, goh_bin)?;
+            }
+        }
     }
 
     info!("All hooks ok");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtins_and_scripts_share_one_ordered_list() {
+        let steps = merge_global(
+            Check::ALL,
+            [
+                PathBuf::from("02-z.sh"),
+                PathBuf::from("00-a.sh"),
+                PathBuf::from("01-comments.sh"),
+            ],
+        );
+
+        let names: Vec<String> = steps
+            .iter()
+            .map(|step| match step {
+                Step::Builtin(check) => check.script_name().to_string(),
+                Step::Script(script) => file_name(script),
+            })
+            .collect();
+
+        assert_eq!(
+            names,
+            [
+                "00-a.sh",
+                "00-format.sh",
+                "01-comments.sh",
+                "02-tests-ascii.sh",
+                "02-z.sh"
+            ]
+        );
+    }
+
+    #[test]
+    fn other_hooks_have_no_builtins() {
+        let steps = merge_global(
+            Check::ALL
+                .into_iter()
+                .filter(|check| check.hook_name() == "pre-push"),
+            [PathBuf::from("00-a.sh")],
+        );
+        assert!(steps.iter().all(|step| matches!(step, Step::Script(_))));
+    }
 }

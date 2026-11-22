@@ -15,6 +15,7 @@ mod commands;
 mod comments;
 mod common;
 mod error;
+mod format;
 mod git_util;
 mod hooks;
 mod ignore;

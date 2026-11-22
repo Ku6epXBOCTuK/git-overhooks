@@ -6,7 +6,7 @@ pub mod strings;
 
 use std::path::Path;
 
-use crate::{check, error::AppError, ignore::Ignores};
+use crate::{check, error::AppError, git_util, ignore::Ignores};
 
 use config::CommentConfig;
 use parser::{CommentKind, Syntax};
@@ -147,6 +147,16 @@ pub fn run(
     report.skipped_repositories = skipped;
 
     Ok(report)
+}
+
+pub fn hook(root: &Path) -> Result<(), AppError> {
+    let files = git_util::collect_files(root, true)?;
+    let report = run(root, &files, false, true, false)?;
+    print_report(&report, false, false);
+    if report.failed() {
+        return Err(AppError::HookFailed(1));
+    }
+    Ok(())
 }
 
 pub fn run_all(root: &Path, write: bool, staged: bool, remove: bool) -> Result<Report, AppError> {

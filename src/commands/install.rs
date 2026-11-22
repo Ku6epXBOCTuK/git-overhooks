@@ -12,28 +12,11 @@ use crate::{
 use clap::Args;
 use tracing::{info, warn};
 
-const FORMAT_SCRIPT: &str = Check::Format.script_name();
-const COMMENTS_SCRIPT: &str = Check::Comments.script_name();
-const TESTS_ASCII_SCRIPT: &str = Check::TestsAscii.script_name();
-
 #[derive(Args, Debug)]
 pub struct InstallArgs {
     /// NOTE: Force overwrite core.hooksPath
     #[arg(short, long)]
     force: bool,
-}
-
-fn write_format_script(hook_dir: &Path) -> Result<(), AppError> {
-    let path = hook_dir.join(FORMAT_SCRIPT);
-    if path.exists() {
-        info!("Format script already exists: {}", path.display());
-        return Ok(());
-    }
-    info!("Write format script: {}", path.display());
-    fs::write(&path, include_str!("../format.template"))?;
-    set_executable(&path)?;
-
-    Ok(())
 }
 
 // NOTE: on unix the permission change can fail, on other platforms there is
@@ -50,19 +33,17 @@ fn set_executable(path: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-fn write_comments_script(hook_dir: &Path) -> Result<(), AppError> {
-    let path = hook_dir.join(COMMENTS_SCRIPT);
-    info!("Write comments script: {}", path.display());
-    fs::write(&path, include_str!("../comments.template"))?;
-    set_executable(&path)?;
-    Ok(())
-}
-
-fn write_tests_ascii_script(hook_dir: &Path) -> Result<(), AppError> {
-    let path = hook_dir.join(TESTS_ASCII_SCRIPT);
-    info!("Write tests-ascii script: {}", path.display());
-    fs::write(&path, include_str!("../tests_ascii.template"))?;
-    set_executable(&path)?;
+fn remove_legacy_checks(base: &Path) -> Result<(), AppError> {
+    for hook in GIT_HOOKS {
+        let dir = base.join(HOOKS_DIR).join(format!("{hook}.d"));
+        for check in Check::ALL {
+            let path = dir.join(check.script_name());
+            if path.is_file() {
+                info!("Remove legacy check script: {}", path.display());
+                fs::remove_file(path)?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -171,16 +152,7 @@ pub fn command_install(args: &InstallArgs) -> Result<(), AppError> {
         write_git_hook(&bin_dir, hook)?;
     }
 
-    let pre_commit_dir = app_dir.join(HOOKS_DIR).join("pre-commit.d");
-    if args.force {
-        let path = pre_commit_dir.join(FORMAT_SCRIPT);
-        if path.exists() {
-            fs::remove_file(&path)?;
-        }
-    }
-    write_format_script(&pre_commit_dir)?;
-    write_comments_script(&pre_commit_dir)?;
-    write_tests_ascii_script(&pre_commit_dir)?;
+    remove_legacy_checks(app_dir)?;
     write_config(args.force)?;
 
     info!("Hooks created ok");
@@ -232,15 +204,20 @@ mod tests {
     }
 
     #[test]
-    fn generated_check_scripts_have_no_embedded_binary_path() {
-        for contents in [
-            include_str!("../comments.template"),
-            include_str!("../tests_ascii.template"),
-        ] {
-            assert!(!contents.contains("{{bin-path}}"), "{contents}");
-            assert!(!contents.contains("C:/"), "{contents}");
-            assert!(!contents.contains("F:/"), "{contents}");
-            assert!(contents.contains("GOH_BIN"), "{contents}");
+    fn legacy_check_scripts_are_removed() {
+        let base = std::env::temp_dir().join(format!("goh-legacy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let dir = base.join(HOOKS_DIR).join("pre-commit.d");
+        fs::create_dir_all(&dir).unwrap();
+        for check in Check::ALL {
+            fs::write(dir.join(check.script_name()), "old").unwrap();
         }
+
+        remove_legacy_checks(&base).unwrap();
+
+        for check in Check::ALL {
+            assert!(!dir.join(check.script_name()).exists());
+        }
+        let _ = fs::remove_dir_all(&base);
     }
 }

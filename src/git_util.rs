@@ -23,6 +23,20 @@ pub(crate) fn git(root: &Path, args: &[&str]) -> Result<Vec<String>, AppError> {
         .collect())
 }
 
+pub(crate) fn git_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, AppError> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|_| AppError::GitError)?;
+
+    if !output.status.success() {
+        return Err(AppError::GitError);
+    }
+
+    Ok(output.stdout)
+}
+
 pub(crate) fn collect_files(root: &Path, staged: bool) -> Result<Vec<String>, AppError> {
     let mut set = BTreeSet::new();
 

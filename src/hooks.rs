@@ -15,6 +15,22 @@ pub enum Check {
 }
 
 impl Check {
+    pub const ALL: [Self; 3] = [Self::Format, Self::Comments, Self::TestsAscii];
+
+    pub const fn hook_name(self) -> &'static str {
+        match self {
+            Self::Format | Self::Comments | Self::TestsAscii => "pre-commit",
+        }
+    }
+
+    pub fn run(self, root: &Path) -> Result<(), AppError> {
+        match self {
+            Self::Format => crate::format::hook(root),
+            Self::Comments => crate::comments::hook(root),
+            Self::TestsAscii => crate::tests_ascii::hook(root),
+        }
+    }
+
     pub const fn name(self) -> &'static str {
         match self {
             Self::Format => "format",
@@ -43,7 +59,7 @@ impl Check {
     }
 
     pub fn from_script(file_name: &str) -> Option<Self> {
-        [Self::Format, Self::Comments, Self::TestsAscii]
+        Self::ALL
             .into_iter()
             .find(|check| check.script_name() == file_name)
     }
@@ -277,6 +293,20 @@ mod tests {
         assert_eq!(Check::parse("lint"), None);
         assert_eq!(Check::from_script("01-comments.sh"), Some(Check::Comments));
         assert_eq!(Check::from_script("publish.sh"), None);
+    }
+
+    #[test]
+    fn builtin_names_cover_every_check() {
+        let mut names: Vec<&str> = Check::ALL.into_iter().map(Check::script_name).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            ["00-format.sh", "01-comments.sh", "02-tests-ascii.sh"]
+        );
+        for check in Check::ALL {
+            assert_eq!(check.hook_name(), "pre-commit");
+            assert_eq!(Check::from_script(check.script_name()), Some(check));
+        }
     }
 
     #[test]
