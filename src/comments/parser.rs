@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use super::config::Directives;
 use super::doc::{self, DocPolicy, Marker};
 use super::strings::StringStyle;
 
@@ -60,37 +61,6 @@ pub fn syntax_for(path: &Path) -> Option<Syntax> {
         strings: string_style(&ext),
     })
 }
-
-const DIRECTIVES: &[&str] = &[
-    "!",
-    "@ts-",
-    "@flow",
-    "@jsx",
-    "@vue",
-    "@internal",
-    "@__PURE__",
-    "biome-ignore",
-    "checkstyle:",
-    "code:",
-    "deno-lint-ignore",
-    "eslint-",
-    "go:",
-    "istanbul",
-    "jshint",
-    "jslint",
-    "noinspection",
-    "nolint",
-    "prettier-ignore",
-    "region",
-    "endregion",
-    "stylelint",
-    "suppress",
-    "ts-ignore",
-    "tslint:",
-    "type:",
-    "vim:",
-    "vscode:",
-];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommentKind {
@@ -220,9 +190,12 @@ fn next_rust_line<'a>(lines: &[&'a str], mut index: usize) -> Option<&'a str> {
     None
 }
 
-fn is_directive(content: &str) -> bool {
-    let content = content.trim_start_matches([' ', '\t', ':', '-', '*']);
-    DIRECTIVES.iter().any(|d| content.starts_with(d))
+fn is_directive(content: &str, directives: &Directives) -> bool {
+    directives.matches(content)
+}
+
+fn is_block_directive(content: &str, directives: &Directives) -> bool {
+    directives.matches_block(content)
 }
 
 fn clean_content(raw: &str) -> String {
@@ -325,10 +298,15 @@ fn parse_block_comment(
 
 #[cfg(test)]
 pub fn parse(source: &str, syntax: &Syntax) -> Vec<CommentBlock> {
-    parse_with_doc(source, syntax, false)
+    parse_with_doc(source, syntax, false, &Directives::default())
 }
 
-pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<CommentBlock> {
+pub fn parse_with_doc(
+    source: &str,
+    syntax: &Syntax,
+    plain_doc: bool,
+    directives: &Directives,
+) -> Vec<CommentBlock> {
     let policy = match syntax.doc {
         DocPolicy::JsDoc { .. } => DocPolicy::jsdoc(plain_doc),
         DocPolicy::RustDoc { .. } => DocPolicy::rustdoc(plain_doc),
@@ -355,7 +333,7 @@ pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<Com
         if trimmed.starts_with(HTML_OPEN) && syntax.html {
             if let Some(block) = parse_block_comment(&lines, index, HTML_OPEN, HTML_CLOSE) {
                 index = block.end + 1;
-                if !is_directive(&block.contents[0]) {
+                if !is_block_directive(&block.contents[0], directives) {
                     blocks.push(block);
                 }
                 continue;
@@ -389,7 +367,7 @@ pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<Com
                     }
                     Some(block) => {
                         index = block.end + 1;
-                        if !is_directive(&block.contents[0]) {
+                        if !is_block_directive(&block.contents[0], directives) {
                             blocks.push(block);
                         }
                     }
@@ -400,7 +378,7 @@ pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<Com
             match parse_block_comment(&lines, index, BLOCK_OPEN, BLOCK_CLOSE) {
                 Some(block) => {
                     index = block.end + 1;
-                    if !is_directive(&block.contents[0]) {
+                    if !is_block_directive(&block.contents[0], directives) {
                         blocks.push(block);
                     }
                 }
@@ -467,7 +445,7 @@ pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<Com
         };
 
         let rest = &lines[index][marker_start + marker.len()..];
-        if is_directive(rest) {
+        if is_directive(rest, directives) {
             index += 1;
             continue;
         }
@@ -483,7 +461,7 @@ pub fn parse_with_doc(source: &str, syntax: &Syntax, plain_doc: bool) -> Vec<Com
                 break;
             }
             let next_rest = &next[marker.len()..];
-            if is_directive(next_rest) {
+            if is_directive(next_rest, directives) {
                 break;
             }
             end += 1;
@@ -588,6 +566,32 @@ mod tests {
     fn skips_directives() {
         let source = "// eslint-disable-next-line\n// prettier-ignore\n// go:generate x\n// nolint: all\n// real\n";
         let blocks = parse(source, &slash());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].contents, vec![" real"]);
+    }
+
+    #[test]
+    fn skips_tool_directives_and_at_annotations_in_ts() {
+        let source = "// @vitest-environment node\n// noqa: E501\n// node:coverage disable\n// swiftlint:disable all\n// real\nlet x = 1;\n";
+        let blocks = parse(source, &script());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].contents, vec![" real"]);
+    }
+
+    #[test]
+    fn directive_match_ignores_case() {
+        let source = "// CHECKSTYLE:OFF\n// NOPMD\n// real\n";
+        let blocks = parse(source, &slash());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].contents, vec![" real"]);
+    }
+
+    #[test]
+    fn skips_configured_directives() {
+        let source = "// team-lint: all\n// real\n";
+        let mut directives = Directives::default();
+        directives.extend(vec!["team-lint:".to_string()]);
+        let blocks = parse_with_doc(source, &slash(), false, &directives);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].contents, vec![" real"]);
     }
@@ -744,7 +748,7 @@ mod tests {
     }
 
     fn parse_with_plain_doc(source: &str) -> Vec<CommentBlock> {
-        parse_with_doc(source, &script(), true)
+        parse_with_doc(source, &script(), true, &Directives::default())
     }
 
     #[test]

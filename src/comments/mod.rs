@@ -43,7 +43,12 @@ pub fn process_source(
     config: &CommentConfig,
     remove: bool,
 ) -> (Option<String>, Vec<Finding>) {
-    let blocks = parser::parse_with_doc(source, syntax, config.allows_plain_doc(file));
+    let blocks = parser::parse_with_doc(
+        source,
+        syntax,
+        config.allows_plain_doc(file),
+        &config.directives,
+    );
     if blocks.is_empty() {
         return (None, Vec::new());
     }

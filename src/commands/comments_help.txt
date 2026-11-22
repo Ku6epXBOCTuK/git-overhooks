@@ -24,8 +24,12 @@ IGNORED PATHS
 
 COMMENTS
    Consecutive comment lines are joined into one block.
-   Skipped: shebang and directives (eslint-disable, prettier-ignore, nolint,
-   go:generate, vim: ...). Rust /// and //! are documentation when they carry a
+   Skipped: shebang, tool directives (eslint-disable, prettier-ignore, nolint,
+   go:generate, noqa, node:coverage, swiftlint:, ...), any @-annotation in a
+   line comment (@vitest-environment, @ts-expect-error), known @ pragmas in a
+   block comment (@__PURE__, @vite-ignore) and extra prefixes from [comments]
+   directives. Matching ignores case. JSDoc tags in /** */ are not directives.
+   Rust /// and //! are documentation when they carry a
    rustdoc signal: a section (# Examples), code (fence, four-space indent,
    backticks), a link or a parameter description (`name`).
    JSDoc in js/ts/svelte/vue/astro: a /** */ block with a tag (@param, @returns,
@@ -61,7 +65,9 @@ SETTINGS
    project:  goh.toml
    The project file overrides the global one, setting by setting. The keywords table is
    replaced as a whole.
-   [comments] keys: max_lines (default 3), doc_paths (default []), keywords table.
+   [comments] keys: max_lines (default 3), doc_paths (default []), directives
+   (default []), keywords table. Extra directives extend the built-in list;
+   they are case-insensitive prefixes, so "swiftlint:" covers swiftlint:disable.
    doc_paths patterns are relative to the repository root; a trailing /** or / is
    dropped, so "src/components/**" covers every file in that directory. Empty
    doc_paths means only documentation with a signal is accepted: rustdoc blocks

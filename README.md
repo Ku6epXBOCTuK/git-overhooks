@@ -53,8 +53,20 @@ untracked) и находит четыре вида нарушений:
 остаётся только сообщение об удалении — претензии к удалённому блоку
 неактуальны.
 
-Не трогаются shebang, директивы (`eslint-disable`, `prettier-ignore`, `nolint`,
-`go:generate`, `vim:`), а настоящая документация проверяется только на ASCII.
+Не трогаются shebang, директивы инструментов (`eslint-disable`,
+`prettier-ignore`, `nolint`, `go:generate`, `noqa`, `node:coverage`,
+`swiftlint:`), любые аннотации с `@` в линейном комментарии
+(`@vitest-environment`, `@ts-expect-error`) и известные `@`-прагмы в блочном
+(`@__PURE__`, `@vite-ignore`). Сопоставление префиксов не зависит от регистра.
+JSDoc-теги (`@param`, `@description`) в `/** */` директивами не считаются. Свои
+префиксы задаются в `[comments] directives`; они добавляются к встроенным:
+
+```toml
+[comments]
+directives = ["team-lint:", "mytool-ignore"]
+```
+
+Настоящая документация проверяется только на ASCII.
 
 1. `///` и `//!` в Rust считаются документацией, если внутри есть признак
    rustdoc:

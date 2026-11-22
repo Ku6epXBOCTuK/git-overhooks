@@ -200,4 +200,19 @@ mod tests {
         assert!(section.contains("doc_paths"), "{section}");
         assert!(section.contains("declaration"), "{section}");
     }
+
+    #[test]
+    fn help_explains_directives() {
+        let help = comments_help();
+        let section = help
+            .split("COMMENTS")
+            .nth(1)
+            .unwrap()
+            .split("RULES")
+            .next()
+            .unwrap();
+        assert!(section.contains("@vitest-environment"), "{section}");
+        assert!(section.contains("ignores case"), "{section}");
+        assert!(help.contains("default []"), "{help}");
+    }
 }

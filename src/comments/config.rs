@@ -14,6 +14,10 @@ max_lines = 3
 # means "only documentation with a signal".
 doc_paths = []
 
+# NOTE: extra comment directives for tools in this project. The built-in list
+# always applies; @-prefixed annotations are skipped without being listed.
+directives = []
+
 # NOTE: key is the canonical spelling, values are punctuation variants.
 # Case is normalized automatically, so list only the dashes you accept.
 [comments.keywords]
@@ -80,6 +84,113 @@ fn fold(word: &str) -> String {
     word.to_ascii_lowercase()
 }
 
+pub const DEFAULT_DIRECTIVES: &[&str] = &[
+    "!",
+    "#__PURE__",
+    "@__PURE__",
+    "@vite-ignore",
+    "bandit:",
+    "biome-ignore",
+    "c8 ignore",
+    "checkstyle:",
+    "code:",
+    "deno-coverage-",
+    "deno-fmt-",
+    "deno-lint-ignore",
+    "endregion",
+    "eslint-",
+    "flake8:",
+    "fmt:",
+    "go:",
+    "istanbul",
+    "isort:",
+    "jshint",
+    "jslint",
+    "noinspection",
+    "nolint",
+    "nopmd",
+    "nosec",
+    "nosonar",
+    "node:coverage",
+    "noqa",
+    "phpcs:",
+    "prettier-ignore",
+    "pragma:",
+    "psalm-suppress",
+    "pyright:",
+    "pylint:",
+    "region",
+    "revive:",
+    "ruff:",
+    "shellcheck",
+    "stylelint",
+    "suppress",
+    "swiftlint:",
+    "tflint-ignore",
+    "ts-ignore",
+    "tslint:",
+    "type:",
+    "vim:",
+    "vscode:",
+    "webpack",
+];
+
+#[derive(Debug, Clone)]
+pub struct Directives {
+    prefixes: Vec<String>,
+}
+
+impl Default for Directives {
+    fn default() -> Self {
+        Self {
+            prefixes: DEFAULT_DIRECTIVES
+                .iter()
+                .map(|prefix| fold(prefix))
+                .collect(),
+        }
+    }
+}
+
+impl Directives {
+    pub fn extend(&mut self, extra: Vec<String>) {
+        self.prefixes.extend(
+            extra
+                .into_iter()
+                .map(|prefix| fold(prefix.trim()))
+                .filter(|prefix| !prefix.is_empty()),
+        );
+    }
+
+    pub fn matches(&self, content: &str) -> bool {
+        self.matches_with_at(content, true)
+    }
+
+    /// NOTE: a JSDoc tag is documentation syntax, not a tool pragma, so the
+    /// @-rule is off inside /* */ blocks where detached tags stay detectable.
+    pub fn matches_block(&self, content: &str) -> bool {
+        self.matches_with_at(content, false)
+    }
+
+    fn matches_with_at(&self, content: &str, allow_at: bool) -> bool {
+        let content = content.trim_start_matches([' ', '\t', ':', '-', '*']);
+        let folded = fold(content);
+        if self
+            .prefixes
+            .iter()
+            .any(|prefix| folded.starts_with(prefix))
+        {
+            return true;
+        }
+
+        if !allow_at {
+            return false;
+        }
+        let mut chars = folded.chars();
+        matches!(chars.next(), Some('@'))
+            && matches!(chars.next(), Some(c) if c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Keyword {
     pub canonical: String,
@@ -104,6 +215,7 @@ pub struct CommentConfig {
     pub keywords: Vec<Keyword>,
     pub max_lines: usize,
     pub doc_paths: Vec<String>,
+    pub directives: Directives,
 }
 
 impl Default for CommentConfig {
@@ -116,6 +228,7 @@ impl Default for CommentConfig {
             ],
             max_lines: 3,
             doc_paths: Vec::new(),
+            directives: Directives::default(),
         }
     }
 }
@@ -133,6 +246,7 @@ struct CommentsFile {
     max_lines: Option<usize>,
     keywords: Option<BTreeMap<String, Vec<String>>>,
     doc_paths: Option<Vec<String>>,
+    directives: Option<Vec<String>>,
 }
 
 /// NOTE: doc paths follow the .gohignore shape: a trailing `/**` and a
@@ -207,6 +321,10 @@ impl CommentConfig {
 
         if let Some(doc_paths) = comments.doc_paths {
             self.doc_paths = doc_paths;
+        }
+
+        if let Some(directives) = comments.directives {
+            self.directives.extend(directives);
         }
     }
 }
@@ -401,5 +519,62 @@ mod tests {
         );
         let config = CommentConfig::load(Some(&path), None).unwrap();
         assert!(!config.allows_plain_doc("a.ts"));
+    }
+
+    #[test]
+    fn default_directives_cover_common_tools() {
+        let directives = Directives::default();
+        assert!(directives.matches(" eslint-disable-next-line"));
+        assert!(directives.matches(" noqa: E501"));
+        assert!(directives.matches(" node:coverage disable"));
+        assert!(directives.matches(" deno-fmt-ignore"));
+        assert!(directives.matches(" swiftlint:disable all"));
+        assert!(directives.matches(" CHECKSTYLE:OFF"));
+        assert!(directives.matches(" NOPMD"));
+        assert!(!directives.matches(" just a note"));
+    }
+
+    #[test]
+    fn at_annotations_are_directives_without_a_list_entry() {
+        let directives = Directives::default();
+        assert!(directives.matches(" @vitest-environment node"));
+        assert!(directives.matches(" @vite-ignore"));
+        assert!(directives.matches(" @phpstan-ignore-next-line"));
+        assert!(directives.matches(" @__PURE__"));
+        assert!(!directives.matches(" @ note"));
+        assert!(directives.matches_block(" @__PURE__"));
+        assert!(!directives.matches_block(" @param {string} a"));
+        assert!(!directives.matches_block(" @description text"));
+    }
+
+    #[test]
+    fn config_directives_extend_builtins() {
+        let path = write_file(
+            "goh-config-test-directives",
+            CONFIG_FILE,
+            "[comments]\ndirectives = [\"team-lint:\", \"  \", \"MYTOOL-IGNORE\"]\n",
+        );
+        let config = CommentConfig::load(Some(&path), None).unwrap();
+        assert!(config.directives.matches(" team-lint: all"));
+        assert!(config.directives.matches(" mytool-ignore reason"));
+        assert!(config.directives.matches(" prettier-ignore"));
+        assert!(!config.directives.matches(" "));
+    }
+
+    #[test]
+    fn project_directives_extend_global() {
+        let global = write_file(
+            "goh-config-test-directives-global",
+            CONFIG_FILE,
+            "[comments]\ndirectives = [\"global-lint:\"]\n",
+        );
+        let project = write_file(
+            "goh-config-test-directives-project",
+            "goh.toml",
+            "[comments]\ndirectives = [\"project-lint:\"]\n",
+        );
+        let config = CommentConfig::load(Some(&global), Some(&project)).unwrap();
+        assert!(config.directives.matches(" global-lint: x"));
+        assert!(config.directives.matches(" project-lint: x"));
     }
 }

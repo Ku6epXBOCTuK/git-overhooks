@@ -229,6 +229,7 @@ pub fn apply(block: &CommentBlock, config: &CommentConfig) -> Outcome {
 mod tests {
     use super::*;
     use crate::comments::{
+        config::Directives,
         doc::DocPolicy,
         parser::{self, Syntax},
     };
@@ -273,7 +274,8 @@ mod tests {
 
     fn rust_outcome(source: &str) -> Outcome {
         let syntax = parser::syntax_for(std::path::Path::new("a.rs")).unwrap();
-        let block = parser::parse_with_doc(source, &syntax, false).remove(0);
+        let block =
+            parser::parse_with_doc(source, &syntax, false, &Directives::default()).remove(0);
         assert_eq!(block.kind, CommentKind::RustDoc);
         apply(&block, &CommentConfig::default())
     }
