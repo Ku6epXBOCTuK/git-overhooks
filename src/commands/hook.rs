@@ -1,4 +1,5 @@
 use std::{
+    env::current_exe,
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -14,9 +15,9 @@ use tracing::{debug, info};
 
 #[derive(Args, Debug)]
 pub struct HookArgs {
-    /// Hook name (e.g. pre-commit)
+    /// NOTE: Hook name (e.g. pre-commit)
     pub hook: String,
-    /// Arguments passed by git
+    /// NOTE: Arguments passed by git
     pub args: Vec<String>,
 }
 
@@ -49,7 +50,7 @@ fn git_path(args: &[&str]) -> Result<PathBuf, AppError> {
     Ok(PathBuf::from(stdout))
 }
 
-/// global → husky → .git-hooks → native .git/hooks
+/// NOTE: resolution order: global, husky, .git-hooks, native .git/hooks.
 fn collect_scripts(root: &Path, hook: &str) -> Result<Vec<PathBuf>, AppError> {
     let mut scripts = Vec::new();
 
@@ -115,13 +116,14 @@ fn resolve_sh() -> Result<PathBuf, AppError> {
     Err(AppError::ShNotFound)
 }
 
-fn run_script(sh: &Path, script: &Path, args: &[String]) -> Result<(), AppError> {
+fn run_script(sh: &Path, script: &Path, args: &[String], goh_bin: &Path) -> Result<(), AppError> {
     debug!("Run script: {}", script.display());
     let script_str = script.to_string_lossy().replace('\\', "/");
 
     let status = Command::new(sh)
         .arg(&script_str)
         .args(args)
+        .env("GOH_BIN", goh_bin)
         .status()
         .map_err(|err| AppError::Unknown(format!("failed to run {}: {err}", script.display())))?;
 
@@ -179,9 +181,10 @@ pub fn command_hook(args: &HookArgs) -> Result<(), AppError> {
 
     let sh = resolve_sh()?;
     debug!("sh: {}", sh.display());
+    let goh_bin = current_exe()?;
 
     for script in &scripts {
-        run_script(&sh, script, &args.args)?;
+        run_script(&sh, script, &args.args, &goh_bin)?;
     }
 
     info!("All hooks ok");

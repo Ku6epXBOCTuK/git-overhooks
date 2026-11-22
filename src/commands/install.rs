@@ -1,7 +1,11 @@
-use std::{env::current_exe, fs, path::Path, process::Command};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use crate::{
-    common::{BIN_DIR, GIT_HOOKS, HOOKS_DIR, app_dir, use_dir},
+    common::{BIN_DIR, GIT_HOOKS, HOOKS_DIR, app_dir, use_dir, warn_user},
     error::AppError,
     hooks::Check,
 };
@@ -14,7 +18,7 @@ const TESTS_ASCII_SCRIPT: &str = Check::TestsAscii.script_name();
 
 #[derive(Args, Debug)]
 pub struct InstallArgs {
-    /// Force overwrite core.hooksPath
+    /// NOTE: Force overwrite core.hooksPath
     #[arg(short, long)]
     force: bool,
 }
@@ -46,30 +50,18 @@ fn set_executable(path: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-fn write_comments_script(hook_dir: &Path, bin_path: &Path) -> Result<(), AppError> {
+fn write_comments_script(hook_dir: &Path) -> Result<(), AppError> {
     let path = hook_dir.join(COMMENTS_SCRIPT);
-    let bin_str = dunce::canonicalize(bin_path)?
-        .to_str()
-        .ok_or(AppError::InternalError)?
-        .replace('\\', "/");
-    let contents = include_str!("../comments.template").replace("{{bin-path}}", &bin_str);
-
     info!("Write comments script: {}", path.display());
-    fs::write(&path, contents)?;
+    fs::write(&path, include_str!("../comments.template"))?;
     set_executable(&path)?;
     Ok(())
 }
 
-fn write_tests_ascii_script(hook_dir: &Path, bin_path: &Path) -> Result<(), AppError> {
+fn write_tests_ascii_script(hook_dir: &Path) -> Result<(), AppError> {
     let path = hook_dir.join(TESTS_ASCII_SCRIPT);
-    let bin_str = dunce::canonicalize(bin_path)?
-        .to_str()
-        .ok_or(AppError::InternalError)?
-        .replace('\\', "/");
-    let contents = include_str!("../tests_ascii.template").replace("{{bin-path}}", &bin_str);
-
     info!("Write tests-ascii script: {}", path.display());
-    fs::write(&path, contents)?;
+    fs::write(&path, include_str!("../tests_ascii.template"))?;
     set_executable(&path)?;
     Ok(())
 }
@@ -99,21 +91,51 @@ fn write_config(force: bool) -> Result<(), AppError> {
     )
 }
 
-fn write_git_hook(bin_dir: &Path, hook_name: &str, bin_path: &Path) -> Result<(), AppError> {
-    info!("Write hook: {hook_name}");
-    let bin_path = dunce::canonicalize(bin_path)?;
-    let bin_str = bin_path.to_str().ok_or(AppError::InternalError)?;
-    let template = include_str!("../hook.template");
-    let contents = template
-        .replace("{{hook-name}}", hook_name)
-        .replace("{{bin-path}}", bin_str)
-        .replace('\\', "/");
+fn hook_contents(hook_name: &str) -> String {
+    include_str!("../hook.template").replace("{{hook-name}}", hook_name)
+}
 
+fn write_git_hook(bin_dir: &Path, hook_name: &str) -> Result<(), AppError> {
+    info!("Write hook: {hook_name}");
     let path = bin_dir.join(hook_name);
-    fs::write(&path, contents)?;
+    fs::write(&path, hook_contents(hook_name))?;
     set_executable(&path)?;
 
     Ok(())
+}
+
+fn resolve_in_path(name: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+    for dir in env::split_paths(&path) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        #[cfg(windows)]
+        {
+            let candidate = dir.join(format!("{name}.exe"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn warn_if_path_mismatch(self_path: &Path) {
+    let Some(found) = resolve_in_path("goh") else {
+        warn_user("goh is not on PATH; add the cargo bin directory to PATH");
+        return;
+    };
+    if let (Ok(found), Ok(ours)) = (dunce::canonicalize(found), dunce::canonicalize(self_path))
+        && found != ours
+    {
+        warn_user(format!(
+            "goh on PATH resolves to {}, but this install is {}; hooks will run the PATH copy",
+            found.display(),
+            ours.display()
+        ));
+    }
 }
 
 fn get_git_global_hook_path() -> Result<Option<String>, AppError> {
@@ -140,11 +162,13 @@ pub fn command_install(args: &InstallArgs) -> Result<(), AppError> {
 
     let app_dir = app_dir();
     let bin_dir = use_dir(app_dir, BIN_DIR)?;
-    let self_path = current_exe()?;
+    let self_path = env::current_exe()?;
+
+    warn_if_path_mismatch(&self_path);
 
     for hook in GIT_HOOKS {
         use_dir(&app_dir.join(HOOKS_DIR), format!("{hook}.d"))?;
-        write_git_hook(&bin_dir, hook, &self_path)?;
+        write_git_hook(&bin_dir, hook)?;
     }
 
     let pre_commit_dir = app_dir.join(HOOKS_DIR).join("pre-commit.d");
@@ -155,8 +179,8 @@ pub fn command_install(args: &InstallArgs) -> Result<(), AppError> {
         }
     }
     write_format_script(&pre_commit_dir)?;
-    write_comments_script(&pre_commit_dir, &self_path)?;
-    write_tests_ascii_script(&pre_commit_dir, &self_path)?;
+    write_comments_script(&pre_commit_dir)?;
+    write_tests_ascii_script(&pre_commit_dir)?;
     write_config(args.force)?;
 
     info!("Hooks created ok");
@@ -186,4 +210,37 @@ pub fn command_install(args: &InstallArgs) -> Result<(), AppError> {
 
     info!("Install ok");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_hook_resolves_binary_at_runtime() {
+        let contents = hook_contents("pre-commit");
+
+        assert!(!contents.contains("{{"), "{contents}");
+        assert!(!contents.contains("C:/"), "{contents}");
+        assert!(!contents.contains("F:/"), "{contents}");
+        assert!(contents.contains("command -v goh"), "{contents}");
+        assert!(contents.contains("CARGO_HOME"), "{contents}");
+        assert!(
+            contents.contains("exec goh hook pre-commit \"$@\""),
+            "{contents}"
+        );
+    }
+
+    #[test]
+    fn generated_check_scripts_have_no_embedded_binary_path() {
+        for contents in [
+            include_str!("../comments.template"),
+            include_str!("../tests_ascii.template"),
+        ] {
+            assert!(!contents.contains("{{bin-path}}"), "{contents}");
+            assert!(!contents.contains("C:/"), "{contents}");
+            assert!(!contents.contains("F:/"), "{contents}");
+            assert!(contents.contains("GOH_BIN"), "{contents}");
+        }
+    }
 }
