@@ -3,12 +3,14 @@ use clap::Args;
 
 #[derive(Args, Debug)]
 pub struct CommentsArgs {
-    /// Check every file in the repository except ignored ones
-    #[arg(long)]
+    #[arg(long, help = "Check every file in the repository except ignored ones")]
     all: bool,
 
-    /// Check only staged files (the set the pre-commit hook sees)
-    #[arg(long, conflicts_with = "all")]
+    #[arg(
+        long,
+        conflicts_with = "all",
+        help = "Check only staged files (the set the pre-commit hook sees)"
+    )]
     staged: bool,
 
     #[command(flatten)]
@@ -17,12 +19,16 @@ pub struct CommentsArgs {
 
 #[derive(Args, Debug)]
 pub struct WriteOptions {
-    /// Rewrite files instead of only reporting: normalize keywords and cut long blocks
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Rewrite files instead of only reporting: normalize keywords and cut long blocks"
+    )]
     write: bool,
 
-    /// Allow removing comments that have no keyword (applied together with --write)
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Allow removing comments that have no keyword (applied together with --write)"
+    )]
     remove: bool,
 }
 

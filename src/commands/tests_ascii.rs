@@ -3,12 +3,14 @@ use clap::Args;
 
 #[derive(Args, Debug)]
 pub struct TestsAsciiArgs {
-    /// Check every file in the repository except ignored ones
-    #[arg(long)]
+    #[arg(long, help = "Check every file in the repository except ignored ones")]
     all: bool,
 
-    /// Check only staged files (the set the pre-commit hook sees)
-    #[arg(long, conflicts_with = "all")]
+    #[arg(
+        long,
+        conflicts_with = "all",
+        help = "Check only staged files (the set the pre-commit hook sees)"
+    )]
     staged: bool,
 }
 

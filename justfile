@@ -1,6 +1,8 @@
+cargo_bin := env_var("CARGO_HOME") + "/bin/goh.exe"
+
 install:
 	cargo install --path . --force
-	goh install
+	"{{cargo_bin}}" install
 
 dev:
 	cargo run -- install -vvvv

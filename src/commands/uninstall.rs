@@ -6,8 +6,7 @@ use tracing::{info, warn};
 
 #[derive(Args, Debug)]
 pub struct UninstallArgs {
-    /// Remove ~/.config/goh with all hook files
-    #[arg(short, long)]
+    #[arg(short, long, help = "Remove ~/.config/goh with all hook files")]
     remove_files: bool,
 }
 

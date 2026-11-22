@@ -88,10 +88,9 @@ fn skip_attribute(tokens: &[Tok], cursor: usize) -> Option<usize> {
     None
 }
 
-/// NOTE: the message is an optional trailing argument and only a pure string
-/// there counts: assert! needs one condition before it, assert_eq!/assert_ne!
-/// a pair, so assert_eq!(actual, "value") is a value, not a message. Format
-/// arguments after the literal and strings of nested calls are left alone.
+/// NOTE: only a pure trailing string counts as a message. assert! needs one
+/// condition before it, assert_eq!/assert_ne! a pair, so the literal in
+/// assert_eq!(actual, "value") is a value, not a message.
 fn message_string(tokens: &[Tok], open: usize, name: &str) -> Option<(usize, String)> {
     let (args, _) = paren_args(tokens, open)?;
 

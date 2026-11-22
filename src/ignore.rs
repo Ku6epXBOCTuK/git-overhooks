@@ -60,10 +60,9 @@ impl Ignores {
         }
     }
 
-    /// NOTE: called by the walk for every directory it descends into. The
-    /// patterns are rewritten against the repository root, so they only ever
-    /// match inside their own directory and need no cleanup when the walk
-    /// leaves it. A missing file is not an error: most directories have none.
+    /// NOTE: the walk calls this for each directory it enters. Patterns are
+    /// rewritten against the root, so they match only there and need no cleanup
+    /// on exit; a missing file is normal and is not an error.
     pub fn add_nested_gitignore(&mut self, dir: &str, path: &Path) {
         self.add_nested(dir, path, false);
     }

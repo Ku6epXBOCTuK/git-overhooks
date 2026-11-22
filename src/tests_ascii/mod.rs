@@ -24,9 +24,9 @@ pub fn check(source: &str, file: &str) -> Vec<Finding> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// Name of a test: it("...") or the function of a #[test].
+    // NOTE: Name of a test: it("...") or the function of a #[test].
     Title,
-    /// Message text of an assertion.
+    // NOTE: Message text of an assertion.
     Assert,
 }
 
@@ -35,7 +35,7 @@ pub struct Finding {
     pub file: String,
     pub line: usize,
     pub kind: Kind,
-    /// The offending literal as it is written in the source.
+    // NOTE: The offending literal as it is written in the source.
     pub text: String,
 }
 
@@ -120,7 +120,7 @@ pub fn hook(root: &Path) -> Result<(), AppError> {
 }
 
 /// NOTE: a regex literal (JS) is tokenized as plain punctuation, so a pattern
-/// like `/it\("…"/` could confuse the matcher; that is accepted as a rare
+/// like `/it\("..."/` could confuse the matcher; that is accepted as a rare
 /// trade-off for not building a full parser.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Tok {

@@ -23,7 +23,7 @@ pub struct Finding {
 
 pub struct Report {
     pub findings: Vec<Finding>,
-    /// Files with a known text extension that are not valid UTF-8.
+    // NOTE: Files with a known text extension that are not valid UTF-8.
     pub broken_encoding: Vec<String>,
     pub changed_files: usize,
     pub keywords: Vec<String>,

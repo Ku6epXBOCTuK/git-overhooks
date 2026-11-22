@@ -12,41 +12,42 @@ use crate::{
 
 #[derive(Args, Debug)]
 pub struct IgnoreArgs {
-    /// Checks to ignore: format, comments, tests-ascii (default: every check)
+    #[arg(help = "Checks to ignore: format, comments, tests-ascii (default: every check)")]
     pub checks: Vec<String>,
 
-    /// Repository key or glob, e.g. github.com/acme/* (default: the current repository)
-    #[arg(long, conflicts_with_all = ["project", "list", "folder"])]
+    #[arg(long, conflicts_with_all = ["project", "list", "folder"], help = "Repository key or glob, e.g. github.com/acme/* (default: the current repository)")]
     pub repo: Option<String>,
 
-    /// Ignore this folder and everything below it, repositories with a remote included
-    #[arg(long, conflicts_with_all = ["repo", "project", "list"])]
+    #[arg(long, conflicts_with_all = ["repo", "project", "list"], help = "Ignore this folder and everything below it, repositories with a remote included")]
     pub folder: bool,
 
-    /// Write to the project goh.toml instead of the global one
-    #[arg(long, conflicts_with = "list")]
+    #[arg(
+        long,
+        conflicts_with = "list",
+        help = "Write to the project goh.toml instead of the global one"
+    )]
     pub project: bool,
 
-    /// Print the ignore rules instead of changing them
-    #[arg(long, conflicts_with = "checks")]
+    #[arg(
+        long,
+        conflicts_with = "checks",
+        help = "Print the ignore rules instead of changing them"
+    )]
     pub list: bool,
 }
 
 #[derive(Args, Debug)]
 pub struct UnignoreArgs {
-    /// Checks to bring back: format, comments, tests-ascii (default: every check)
+    #[arg(help = "Checks to bring back: format, comments, tests-ascii (default: every check)")]
     pub checks: Vec<String>,
 
-    /// Repository key or glob, e.g. github.com/acme/* (default: the current repository)
-    #[arg(long, conflicts_with_all = ["project", "folder"])]
+    #[arg(long, conflicts_with_all = ["project", "folder"], help = "Repository key or glob, e.g. github.com/acme/* (default: the current repository)")]
     pub repo: Option<String>,
 
-    /// Bring back this folder and everything below it
-    #[arg(long, conflicts_with_all = ["repo", "project"])]
+    #[arg(long, conflicts_with_all = ["repo", "project"], help = "Bring back this folder and everything below it")]
     pub folder: bool,
 
-    /// Change the project goh.toml instead of the global one
-    #[arg(long)]
+    #[arg(long, help = "Change the project goh.toml instead of the global one")]
     pub project: bool,
 }
 

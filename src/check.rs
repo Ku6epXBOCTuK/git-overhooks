@@ -40,10 +40,9 @@ pub fn filter_nested(root: &Path, files: &[String]) -> (Vec<String>, Vec<String>
 
 pub enum Source {
     Text(String),
-    /// NOTE: MPEG transport stream shares the .ts extension with TypeScript,
-    /// and archives can carry a code-like name, so real binaries stay silent:
-    /// NUL bytes or a meaningful share of control bytes mean data, printable
-    /// bytes in a wrong codepage mean a broken source.
+    /// NOTE: .ts can be a transport stream and archives can carry code-like
+    /// names, so binaries stay silent: NUL or many control bytes mean data,
+    /// while printable bytes in a wrong codepage mean a broken source.
     Binary,
     BrokenEncoding,
     Unreadable,
@@ -96,10 +95,9 @@ fn looks_binary(bytes: &[u8]) -> bool {
     control * 100 > head.len()
 }
 
-/// NOTE: the per-file loop is shared by every check: skip ignored files, read
-/// the source and let the caller turn it into findings and an optional
-/// rewritten file. A source with a broken encoding is reported back by path,
-/// the caller decides how it fails.
+/// NOTE: the shared per-file loop skips ignored paths and reads the source;
+/// the caller makes findings and rewrites. Broken encoding comes back by path,
+/// so the caller decides how it fails.
 pub fn scan_files<T>(
     root: &Path,
     files: &[String],

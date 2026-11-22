@@ -41,18 +41,18 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Install hooks
+    #[command(about = "Install hooks")]
     Install(InstallArgs),
-    /// Uninstall hooks
+    #[command(about = "Uninstall hooks")]
     Uninstall(UninstallArgs),
-    /// Enforce comment rules (keyword, length, ascii)
     #[command(
+        about = "Enforce comment rules (keyword, length, ascii)",
         long_about = comments::LONG_ABOUT,
         after_long_help = comments::HELP
     )]
     Comments(CommentsArgs),
-    /// Check test names and assert messages are ascii-only
     #[command(
+        about = "Check test names and assert messages are ascii-only",
         long_about = "Check test names and assert messages are ascii-only.",
         after_long_help = r#"WHY
   Non-ascii titles and messages can break when tests run on another machine
@@ -95,8 +95,8 @@ EXIT CODE
   1  non-ascii found, the hook 02-tests-ascii.sh fails the commit"#
     )]
     TestsAscii(TestsAsciiArgs),
-    /// Ignore checks for a repository, wholly or one by one
     #[command(
+        about = "Ignore checks for a repository, wholly or one by one",
         long_about = "Ignore checks for a repository, wholly or one by one.",
         after_long_help = r#"WHERE THE RULES LIVE
   global:   ~/.config/goh/goh.toml
@@ -134,8 +134,8 @@ EXAMPLES
   goh ignore --list                       show the rules"#
     )]
     Ignore(IgnoreArgs),
-    /// Bring checks back for a repository
     #[command(
+        about = "Bring checks back for a repository",
         long_about = "Bring checks back for a repository, wholly or one by one.",
         after_long_help = r#"The inverse of goh ignore, with the same keys and checks.
   goh unignore                    every check is back for the current repository
@@ -145,8 +145,10 @@ EXAMPLES
   goh unignore --project          change the project goh.toml"#
     )]
     Unignore(UnignoreArgs),
-    /// Internal: run hook scripts (called by git wrappers)
-    #[command(hide = true)]
+    #[command(
+        about = "Internal: run hook scripts (called by git wrappers)",
+        hide = true
+    )]
     Hook(HookArgs),
 }
 
