@@ -252,10 +252,10 @@ fn describe(finding: &Finding, expected: &str, write: bool, remove: bool) -> Str
                 "comment too long: {lines} lines > max_lines = {max} - {outcome} (marker [cut])"
             )
         }
-        Action::NonAscii => {
-            let keyword = finding.keyword.as_deref().unwrap_or("without keyword");
-            format!("non-ascii characters in comment (keyword {keyword})")
-        }
+        Action::NonAscii => match finding.keyword.as_deref() {
+            Some(keyword) => format!("non-ascii characters in comment (keyword {keyword})"),
+            None => "non-ascii characters in comment".to_string(),
+        },
         Action::DocNonAscii => {
             "non-ascii characters in rust doc: documentation must be in English".to_string()
         }
@@ -428,6 +428,25 @@ mod tests {
         assert_eq!(output, None);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].action, Action::NonAscii);
+    }
+
+    #[test]
+    fn non_ascii_message_omits_keyword_when_absent() {
+        let finding = |keyword| Finding {
+            file: "a.rs".to_string(),
+            line: 1,
+            action: Action::NonAscii,
+            keyword,
+            original: None,
+        };
+        assert_eq!(
+            describe(&finding(Some("NOTE".to_string())), "NOTE:", false, false),
+            "non-ascii characters in comment (keyword NOTE)"
+        );
+        assert_eq!(
+            describe(&finding(None), "NOTE:", false, false),
+            "non-ascii characters in comment"
+        );
     }
 
     #[test]
